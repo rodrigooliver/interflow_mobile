@@ -2,6 +2,15 @@
 
 Aplicativo móvel para acessar o Interflow através de um WebView otimizado.
 
+## Repositório Git
+
+Este projeto está disponível no GitHub:
+```
+git@github.com:rodrigooliver/interflow_mobile.git
+```
+
+Para instruções detalhadas sobre como contribuir para o projeto, consulte o arquivo [README_GIT.md](./README_GIT.md).
+
 ## Características
 
 - WebView otimizado para uma experiência nativa
@@ -22,7 +31,7 @@ Aplicativo móvel para acessar o Interflow através de um WebView otimizado.
 
 1. Clone o repositório:
 ```bash
-git clone https://github.com/seu-usuario/Interflow_mobile.git
+git clone git@github.com:rodrigooliver/interflow_mobile.git
 cd Interflow_mobile
 ```
 
@@ -103,6 +112,12 @@ O APK será gerado em `android/app/build/outputs/apk/release/app-release.apk`.
 ### iOS
 
 Abra o projeto no Xcode e siga o processo padrão de arquivamento e distribuição.
+
+## Documentação adicional
+
+- [SETUP.md](./SETUP.md): Instruções detalhadas de configuração
+- [RESUMO.md](./RESUMO.md): Resumo do projeto e próximos passos
+- [README_GIT.md](./README_GIT.md): Instruções para contribuir com o projeto
 
 ## Licença
 
