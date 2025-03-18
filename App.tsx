@@ -20,7 +20,6 @@ import {
 import { WebView } from 'react-native-webview';
 import OneSignal from 'react-native-onesignal';
 import SplashScreen from 'react-native-splash-screen';
-import { getStatusBarHeight } from 'react-native-status-bar-height';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
@@ -141,6 +140,8 @@ const App = () => {
           overscroll-behavior: none;
           touch-action: manipulation;
           user-select: none;
+          padding-top: 2px !important;
+          padding-bottom: 2px !important;
         }
         
         /* Esconder barra de rolagem */
@@ -151,6 +152,16 @@ const App = () => {
         /* Ajustes para inputs */
         input, textarea {
           font-size: 16px !important; /* Evita zoom em inputs no iOS */
+        }
+
+        /* Ajustes para cabeçalhos fixos */
+        .fixed-header, .sticky-top, header, nav {
+          top: 2px !important;
+        }
+
+        /* Ajustes para rodapés fixos */
+        .fixed-footer, footer {
+          bottom: 2px !important;
         }
       \`;
       document.head.appendChild(style);
@@ -168,36 +179,44 @@ const App = () => {
       
       // Marcar como aplicativo mobile
       window.isNativeApp = true;
+
+      // Ajustar margens do documento após o carregamento completo
+      document.addEventListener('DOMContentLoaded', function() {
+        document.body.style.margin = '2px 0';
+      });
     })();
   `;
 
   return (
     <SafeAreaProvider>
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="#FFFFFF"
+        translucent={false}
+      />
       <SafeAreaView style={styles.container}>
-        <StatusBar
-          barStyle="dark-content"
-          backgroundColor="#FFFFFF"
-        />
-        <WebView
-          ref={webViewRef}
-          source={{ uri: url }}
-          style={styles.webview}
-          onNavigationStateChange={onNavigationStateChange}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          injectedJavaScript={INJECTED_JAVASCRIPT}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          startInLoadingState={true}
-          allowsBackForwardNavigationGestures={true}
-          pullToRefreshEnabled={true}
-          renderLoading={() => (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#0066CC" />
-              <Text style={styles.loadingText}>Carregando Interflow...</Text>
-            </View>
-          )}
-        />
+        <View style={[styles.webviewContainer, Platform.OS === 'ios' ? styles.iosWebviewContainer : null]}>
+          <WebView
+            ref={webViewRef}
+            source={{ uri: url }}
+            style={styles.webview}
+            onNavigationStateChange={onNavigationStateChange}
+            onLoadStart={() => setLoading(true)}
+            onLoadEnd={() => setLoading(false)}
+            injectedJavaScript={INJECTED_JAVASCRIPT}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            allowsBackForwardNavigationGestures={true}
+            pullToRefreshEnabled={true}
+            renderLoading={() => (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#0066CC" />
+                <Text style={styles.loadingText}>Carregando Interflow...</Text>
+              </View>
+            )}
+          />
+        </View>
         {loading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color="#0066CC" />
@@ -212,11 +231,26 @@ const App = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? getStatusBarHeight() : 0,
+    backgroundColor: 'rgb(31, 41, 55)',
+    marginBottom: -20,
+    marginTop: -5,
+    paddingTop: 0,
+  },
+  webviewContainer: {
+    flex: 1,
+    marginVertical: 2, // Reduzindo para uma margem ainda mais sutil
+  },
+  iosWebviewContainer: {
+    // Ajustes específicos para iOS
+    paddingTop: 1,
+    paddingBottom: 1,
   },
   webview: {
     flex: 1,
+    height: '100%',
+    width: '100%',
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
   },
   loadingContainer: {
     position: 'absolute',
