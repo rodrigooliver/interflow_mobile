@@ -57,9 +57,18 @@
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
             BuildableName = "Interflow_mobile.app"
             BlueprintName = "Interflow_mobile"
-            ReferencedContainer = "container:Interflow_mobile.xcodeproj">
+            ReferencedContainer = "container:Interflow.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+            BuildableName = "Interflow_mobile.app"
+            BlueprintName = "Interflow_mobile"
+            ReferencedContainer = "container:Interflow_mobile.xcodeproj">
+         </BuildableReference>
+      </MacroExpansion>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -77,6 +86,15 @@
             ReferencedContainer = "container:Interflow_mobile.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+            BuildableName = "Interflow_mobile.app"
+            BlueprintName = "Interflow_mobile"
+            ReferencedContainer = "container:Interflow_mobile.xcodeproj">
+         </BuildableReference>
+      </MacroExpansion>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">
