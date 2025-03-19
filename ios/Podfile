@@ -31,5 +31,21 @@ target 'Interflow_mobile' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+    
+    # Resolve o erro de dSYM ausente para o hermes.framework 
+    installer.pods_project.targets.each do |target|
+      if target.name == 'hermes-engine'
+        target.build_configurations.each do |config|
+          config.build_settings["EXCLUDED_ARCHS[sdk=iphonesimulator*]"] = "arm64"
+          
+          # Desativa a geração de dSYM para hermes
+          config.build_settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf'
+        end
+      end
+    end
   end
+end
+
+target 'OneSignalNotificationServiceExtension' do
+  pod 'OneSignalXCFramework', '>= 5.0.0', '< 6.0'
 end
