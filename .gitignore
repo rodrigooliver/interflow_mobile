@@ -77,3 +77,8 @@ ios/build/
 .env
 .env.*
 !.env.example
+
+# Arquivos de configuração do Sentry
+sentry.properties
+
+env.ts
