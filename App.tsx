@@ -17,6 +17,8 @@ import {
   View,
   AppState,
   AppStateStatus,
+  Text,
+  TouchableOpacity,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {LogLevel, OneSignal} from 'react-native-onesignal';
@@ -105,7 +107,31 @@ const App = () => {
   const [initialUrlLoaded, setInitialUrlLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false);
+  const [isWebViewVisible, setIsWebViewVisible] = useState(true);
   const lastNotificationRef = useRef<NotificationEvent | null>(null);
+  const appStateSubscription = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
+  const backHandlerSubscription = useRef<ReturnType<typeof BackHandler.addEventListener> | null>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const checkWhiteScreenTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [error, setError] = useState<{
+    type: 'offline' | 'general';
+    message: string;
+  } | null>(null);
+
+  // Limpar recursos quando o componente for desmontado
+  useEffect(() => {
+    return () => {
+      if (appStateSubscription.current) {
+        appStateSubscription.current.remove();
+      }
+      if (backHandlerSubscription.current) {
+        backHandlerSubscription.current.remove();
+      }
+      if (webViewRef.current) {
+        webViewRef.current = null;
+      }
+    };
+  }, []);
 
   // Verificar se há URL pendente no armazenamento ao iniciar
   useEffect(() => {
@@ -115,9 +141,7 @@ const App = () => {
         console.log('URL pendente encontrada:', pendingUrl);
 
         if (pendingUrl) {
-          // Limpar a URL pendente do armazenamento
           await AsyncStorage.removeItem(PENDING_URL_KEY);
-          // Definir como URL inicial
           setUrl(pendingUrl);
           setInitialUrlLoaded(true);
         } else {
@@ -139,16 +163,13 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    // Inicializar o OneSignal assim que o componente montar
     initOneSignal();
 
-    // Monitorar mudanças de estado do aplicativo
-    const subscription = AppState.addEventListener(
+    appStateSubscription.current = AppState.addEventListener(
       'change',
       handleAppStateChange,
     );
 
-    // Esconder a tela de splash após o carregamento
     setTimeout(() => {
       try {
         if (SplashScreen.hide) {
@@ -165,15 +186,18 @@ const App = () => {
       }
     }, 1000);
 
-    // Manipular o botão de voltar no Android
-    const backHandler = BackHandler.addEventListener(
+    backHandlerSubscription.current = BackHandler.addEventListener(
       'hardwareBackPress',
       handleBackPress,
     );
 
     return () => {
-      subscription.remove();
-      backHandler.remove();
+      if (appStateSubscription.current) {
+        appStateSubscription.current.remove();
+      }
+      if (backHandlerSubscription.current) {
+        backHandlerSubscription.current.remove();
+      }
     };
   }, [webViewCanGoBack]);
 
@@ -185,6 +209,52 @@ const App = () => {
         nextAppState === 'active'
       ) {
         console.log('App voltou para o primeiro plano');
+        
+        // Configurar um timeout para verificar se a tela está branca
+        if (checkWhiteScreenTimeoutRef.current) {
+          clearTimeout(checkWhiteScreenTimeoutRef.current);
+        }
+
+        checkWhiteScreenTimeoutRef.current = setTimeout(() => {
+          if (webViewRef.current) {
+            // Injetar JavaScript para verificar se a tela está branca
+            webViewRef.current.injectJavaScript(`
+              (function() {
+                try {
+                  // Verificar se o body está vazio ou tem apenas elementos vazios
+                  const body = document.body;
+                  const hasContent = body.children.length > 0 && 
+                    Array.from(body.children).some(el => 
+                      el.offsetHeight > 0 && el.offsetWidth > 0
+                    );
+                  
+                  // Verificar se há elementos visíveis
+                  const visibleElements = document.querySelectorAll('*');
+                  const hasVisibleElements = Array.from(visibleElements).some(el => {
+                    const style = window.getComputedStyle(el);
+                    return style.display !== 'none' && 
+                           style.visibility !== 'hidden' && 
+                           style.opacity !== '0' &&
+                           el.offsetHeight > 0 && 
+                           el.offsetWidth > 0;
+                  });
+
+                  // Se não houver conteúdo visível, considerar como tela branca
+                  if (!hasContent || !hasVisibleElements) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'whiteScreen',
+                      timestamp: Date.now()
+                    }));
+                  }
+                } catch (error) {
+                  console.error('Erro ao verificar tela branca:', error);
+                }
+              })();
+              true;
+            `);
+          }
+        }, 2000); // Verificar após 2 segundos
+
         // Verificar se tem notificação pendente
         checkPendingUrl();
       }
@@ -559,8 +629,36 @@ const App = () => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
 
+      // Verificar se é uma mensagem de tela branca
+      if (data.type === 'whiteScreen') {
+        console.log('Tela branca detectada, recarregando...');
+        
+        // Resetar o estado de loading
+        setLoading(true);
+        setIsWebViewVisible(true);
+        
+        // Limpar timeout anterior se existir
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+        }
+
+        // Tentar recarregar o WebView
+        if (webViewRef.current) {
+          webViewRef.current.reload();
+        }
+
+        // Configurar um timeout para verificar se o WebView está visível
+        retryTimeoutRef.current = setTimeout(() => {
+          if (!isWebViewVisible) {
+            console.log('WebView ainda não visível após timeout, tentando recarregar novamente...');
+            if (webViewRef.current) {
+              webViewRef.current.reload();
+            }
+          }
+        }, 5000);
+      }
       // Verificar se é uma mensagem de login
-      if (data.type === 'login' && data.userId) {
+      else if (data.type === 'login' && data.userId) {
         console.log(
           'Login detectado, registrando userId no OneSignal:',
           data.userId,
@@ -647,6 +745,13 @@ const App = () => {
     try {
       setLoading(false);
       setInitialUrlLoaded(true);
+      setIsWebViewVisible(true);
+
+      // Limpar timeout de retry se existir
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
 
       // Verificar se há uma notificação que abriu o app
       if (lastNotificationRef.current) {
@@ -670,6 +775,7 @@ const App = () => {
       });
       setLoading(false);
       setInitialUrlLoaded(true);
+      setIsWebViewVisible(true);
     }
   };
 
@@ -691,7 +797,7 @@ const App = () => {
     }
   };
 
-  // Injetar JavaScript para otimizar a experiência do WebView
+  // Otimizar o JavaScript injetado para reduzir uso de memória
   const INJECTED_JAVASCRIPT = `
     (function() {
       try {
@@ -704,7 +810,7 @@ const App = () => {
           deviceId: 'Interflow Mobile',
           isStandalone: true,
           hasNotifications: true,
-          timestamp: new Date().getTime()
+          timestamp: Date.now()
         };
 
         // Manter compatibilidade com código existente
@@ -765,32 +871,26 @@ const App = () => {
         // Remover elementos desnecessários para uma experiência mais nativa
         const style = document.createElement('style');
         style.innerHTML = \`
-          /* Ajustes para melhorar a experiência mobile */
           body {
             -webkit-tap-highlight-color: transparent;
             overscroll-behavior: none;
             touch-action: manipulation;
             user-select: none;
-            padding-top: 2px !important;
-            padding-bottom: 2px !important;
+            padding: 2px 0 !important;
           }
           
-          /* Esconder barra de rolagem */
           ::-webkit-scrollbar {
             display: none;
           }
           
-          /* Ajustes para inputs */
           input, textarea {
-            font-size: 16px !important; /* Evita zoom em inputs no iOS */
+            font-size: 16px !important;
           }
 
-          /* Ajustes para cabeçalhos fixos */
           .fixed-header, .sticky-top, header, nav {
             top: 2px !important;
           }
 
-          /* Ajustes para rodapés fixos */
           .fixed-footer, footer {
             bottom: 2px !important;
           }
@@ -812,14 +912,11 @@ const App = () => {
         document.head.appendChild(style);
         
         // Desabilitar zoom
-        const viewportMeta = document.querySelector('meta[name="viewport"]');
-        if (viewportMeta) {
-          viewportMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-        } else {
-          const newViewportMeta = document.createElement('meta');
-          newViewportMeta.name = 'viewport';
-          newViewportMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-          document.head.appendChild(newViewportMeta);
+        const viewportMeta = document.querySelector('meta[name="viewport"]') || document.createElement('meta');
+        viewportMeta.name = 'viewport';
+        viewportMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+        if (!document.querySelector('meta[name="viewport"]')) {
+          document.head.appendChild(viewportMeta);
         }
 
         // Adicionar evento para detectar quando o DOM estiver pronto
@@ -893,7 +990,10 @@ const App = () => {
           <WebView
             ref={webViewRef}
             source={{uri: url}}
-            style={styles.webview}
+            style={[
+              styles.webview,
+              !isWebViewVisible && styles.webviewHidden
+            ]}
             onNavigationStateChange={onNavigationStateChange}
             onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
@@ -904,34 +1004,90 @@ const App = () => {
             startInLoadingState={true}
             allowsBackForwardNavigationGestures={true}
             pullToRefreshEnabled={true}
+            cacheEnabled={true}
+            cacheMode="LOAD_CACHE_ELSE_NETWORK"
             onError={syntheticEvent => {
               const {nativeEvent} = syntheticEvent;
-              console.warn('WebView error: ', nativeEvent);
-              Sentry.captureException(nativeEvent, {
+              setIsWebViewVisible(false);
+              
+              // Extrair apenas as propriedades relevantes do erro
+              const errorInfo = {
+                code: nativeEvent.code,
+                description: nativeEvent.description,
+                domain: nativeEvent.domain,
+                url: nativeEvent.url,
+                timestamp: new Date().toISOString()
+              };
+              
+              console.warn('WebView error:', errorInfo);
+              
+              // Verificar se é um erro de conexão
+              if (errorInfo.description?.toLowerCase().includes('offline') || 
+                  errorInfo.description?.toLowerCase().includes('no internet connection')) {
+                setError({
+                  type: 'offline',
+                  message: 'Parece que você está sem conexão com a internet. Verifique sua conexão e tente novamente.'
+                });
+              } else {
+                setError({
+                  type: 'general',
+                  message: 'Ocorreu um erro ao carregar a página. Tente novamente mais tarde.'
+                });
+              }
+              
+              // Criar um objeto de erro mais simples e serializável
+              const error = new Error(errorInfo.description || 'WebView error');
+              error.name = 'WebViewError';
+              
+              Sentry.captureException(error, {
                 tags: {
                   location: 'WebView',
                   type: 'ERROR',
+                  code: errorInfo.code,
+                  domain: errorInfo.domain,
+                  url: errorInfo.url
                 },
+                extra: {
+                  errorInfo
+                }
               });
+
+              // Tentar recarregar após um erro
+              if (webViewRef.current) {
+                setTimeout(() => {
+                  webViewRef.current?.reload();
+                }, 3000);
+              }
             }}
             onHttpError={syntheticEvent => {
               const {nativeEvent} = syntheticEvent;
-              console.warn(
-                'WebView HTTP error: ',
-                `Code: ${nativeEvent.statusCode}`,
-              );
-              Sentry.captureException(nativeEvent, {
+              const errorInfo = {
+                statusCode: nativeEvent.statusCode,
+                url: nativeEvent.url,
+                timestamp: new Date().toISOString()
+              };
+              
+              console.warn('WebView HTTP error:', errorInfo);
+              
+              // Criar um objeto de erro mais simples e serializável
+              const error = new Error(`HTTP Error ${nativeEvent.statusCode}`);
+              error.name = 'WebViewHttpError';
+              
+              Sentry.captureException(error, {
                 tags: {
                   location: 'WebView',
                   type: 'HTTP_ERROR',
                   statusCode: nativeEvent.statusCode,
+                  url: nativeEvent.url
                 },
+                extra: {
+                  errorInfo
+                }
               });
             }}
             renderLoading={() => (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#ffffff" />
-                {/* <Text style={styles.loadingText}>Carregando Interflow...</Text> */}
               </View>
             )}
           />
@@ -939,7 +1095,36 @@ const App = () => {
         {loading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color="#ffffff" />
-            {/* <Text style={styles.loadingText}>Carregando Interflow...</Text> */}
+          </View>
+        )}
+        {error && (
+          <View style={styles.errorContainer}>
+            <View style={styles.errorContent}>
+              <ActivityIndicator 
+                size="large" 
+                color="#3B82F6" 
+                style={styles.errorIcon}
+              />
+              <Text style={styles.errorTitle}>
+                {error.type === 'offline' ? 'Sem Conexão' : 'Erro ao Carregar'}
+              </Text>
+              <Text style={styles.errorMessage}>
+                {error.message}
+              </Text>
+              <TouchableOpacity 
+                style={styles.retryButton}
+                onPress={() => {
+                  setError(null);
+                  setIsWebViewVisible(true);
+                  if (webViewRef.current) {
+                    webViewRef.current.reload();
+                  }
+                }}
+              >
+                <ActivityIndicator size="small" color="#FFFFFF" />
+                <Text style={styles.retryButtonText}>Tentar Novamente</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </SafeAreaView>
@@ -950,7 +1135,6 @@ const App = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    // backgroundColor: 'rgb(31, 41, 55)',
     backgroundColor: '#111827',
     marginBottom: -20,
     marginTop: -5,
@@ -958,11 +1142,9 @@ const styles = StyleSheet.create({
   },
   webviewContainer: {
     flex: 1,
-    marginVertical: 2, // Reduzindo para uma margem ainda mais sutil
+    marginVertical: 2,
   },
   iosWebviewContainer: {
-    // Ajustes específicos para iOS
-    // paddingTop: 0,
     paddingBottom: 1,
   },
   webview: {
@@ -983,7 +1165,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#111827',
-    // backgroundColor: '#1f0939',
   },
   loadingOverlay: {
     position: 'absolute',
@@ -993,14 +1174,67 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    // backgroundColor: 'rgba(255, 255, 255, 0.9)',
     backgroundColor: '#111827',
-    // backgroundColor: '#1f0939',
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
     color: '#333333',
+  },
+  webviewHidden: {
+    opacity: 0,
+    height: 0,
+    width: 0,
+  },
+  errorContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#111827',
+    padding: 20,
+  },
+  errorContent: {
+    alignItems: 'center',
+    backgroundColor: '#1F2937',
+    padding: 20,
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 300,
+  },
+  errorIcon: {
+    marginBottom: 16,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: '#3B82F6',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });
 
