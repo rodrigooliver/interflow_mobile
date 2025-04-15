@@ -113,6 +113,9 @@ const App = () => {
   const backHandlerSubscription = useRef<ReturnType<typeof BackHandler.addEventListener> | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkWhiteScreenTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const backgroundTimeRef = useRef<number | null>(null);
+  const currentNavigationStateRef = useRef<WebViewNavigation | null>(null);
+  const whiteScreenDetectionAttemptsRef = useRef<number>(0);
   const [error, setError] = useState<{
     type: 'offline' | 'general';
     message: string;
@@ -203,60 +206,35 @@ const App = () => {
 
   const handleAppStateChange = (nextAppState: AppStateStatus) => {
     try {
+      // Se o app está indo para background
+      if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
+        console.log('App foi para o background');
+        backgroundTimeRef.current = Date.now();
+      }
+      
       // Se o app está voltando para o primeiro plano
       if (
         appState.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
         console.log('App voltou para o primeiro plano');
+        const timeInBackground = backgroundTimeRef.current ? (Date.now() - backgroundTimeRef.current) : 0;
+        console.log(`Tempo em background: ${timeInBackground / 1000} segundos`);
         
-        // Configurar um timeout para verificar se a tela está branca
-        if (checkWhiteScreenTimeoutRef.current) {
-          clearTimeout(checkWhiteScreenTimeoutRef.current);
-        }
-
-        checkWhiteScreenTimeoutRef.current = setTimeout(() => {
+        // Resetar contagem de tentativas de detecção
+        whiteScreenDetectionAttemptsRef.current = 0;
+        
+        // Se ficou muito tempo em background (mais de 10 minutos), força um reload para garantir
+        if (timeInBackground > 10 * 60 * 1000) {
+          console.log('Detectado longo período em background, recarregando WebView');
           if (webViewRef.current) {
-            // Injetar JavaScript para verificar se a tela está branca
-            webViewRef.current.injectJavaScript(`
-              (function() {
-                try {
-                  // Verificar se o body está vazio ou tem apenas elementos vazios
-                  const body = document.body;
-                  const hasContent = body.children.length > 0 && 
-                    Array.from(body.children).some(el => 
-                      el.offsetHeight > 0 && el.offsetWidth > 0
-                    );
-                  
-                  // Verificar se há elementos visíveis
-                  const visibleElements = document.querySelectorAll('*');
-                  const hasVisibleElements = Array.from(visibleElements).some(el => {
-                    const style = window.getComputedStyle(el);
-                    return style.display !== 'none' && 
-                           style.visibility !== 'hidden' && 
-                           style.opacity !== '0' &&
-                           el.offsetHeight > 0 && 
-                           el.offsetWidth > 0;
-                  });
-
-                  // Se não houver conteúdo visível, considerar como tela branca
-                  if (!hasContent || !hasVisibleElements) {
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'whiteScreen',
-                      timestamp: Date.now()
-                    }));
-                  }
-                } catch (error) {
-                  console.error('Erro ao verificar tela branca:', error);
-                }
-              })();
-              true;
-            `);
+            webViewRef.current.reload();
           }
-        }, 2000); // Verificar após 2 segundos
-
-        // Verificar se tem notificação pendente
-        checkPendingUrl();
+          return;
+        }
+        
+        // Verificar integridade do WebView após retornar do background
+        scheduleWhiteScreenDetection();
       }
 
       appState.current = nextAppState;
@@ -271,6 +249,30 @@ const App = () => {
     }
   };
 
+  // Função para agendar detecções de tela branca em sequência
+  const scheduleWhiteScreenDetection = () => {
+    if (checkWhiteScreenTimeoutRef.current) {
+      clearTimeout(checkWhiteScreenTimeoutRef.current);
+    }
+
+    // Reduzir a frequência das verificações para evitar sobrecarregar a WebView
+    const checkTimes = [1000, 3000];
+    
+    // Função recursiva para verificar em intervalos sequenciais
+    const scheduleCheck = (index: number) => {
+      if (index >= checkTimes.length) return;
+      
+      checkWhiteScreenTimeoutRef.current = setTimeout(() => {
+        checkWhiteScreen();
+        scheduleCheck(index + 1);
+      }, checkTimes[index]);
+    };
+    
+    // Iniciar sequência de verificações
+    scheduleCheck(0);
+  };
+
+  // Função para verificar URL pendente após retorno do background
   const checkPendingUrl = async () => {
     try {
       const pendingUrl = await AsyncStorage.getItem(PENDING_URL_KEY);
@@ -321,6 +323,108 @@ const App = () => {
         tags: {
           location: 'checkPendingUrl',
           type: 'ASYNC_STORAGE',
+        },
+      });
+    }
+  };
+
+  // Função para verificar se o WebView está com tela branca
+  const checkWhiteScreen = () => {
+    if (!webViewRef.current || !isWebViewVisible) {
+      return;
+    }
+    
+    try {
+      // Injetar JavaScript para verificar diversos indicadores de tela branca
+      webViewRef.current.injectJavaScript(`
+        (function() {
+          try {
+            // Verificar se o body está vazio ou tem apenas elementos vazios
+            const body = document.body;
+            const hasContent = body.children.length > 0 && 
+              Array.from(body.children).some(el => 
+                el.offsetHeight > 0 && el.offsetWidth > 0
+              );
+            
+            // Verificar se há elementos visíveis com conteúdo real
+            // Modificado para ser menos sensível e evitar falsos positivos
+            const visibleElements = document.querySelectorAll('body *');
+            const hasVisibleElements = Array.from(visibleElements).some(el => {
+              if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'META' || el.tagName === 'LINK') {
+                return false;
+              }
+              const style = window.getComputedStyle(el);
+              return style.display !== 'none' && 
+                     style.visibility !== 'hidden' && 
+                     el.offsetHeight > 10 && 
+                     el.offsetWidth > 10;
+            });
+
+            // Verificar se o body está vazio ou só tem um loader
+            // Modificado para ser mais tolerante com loaders
+            const hasOnlyLoader = document.body.innerHTML.trim() === '';
+
+            // Verificação adicional para detectar conteúdo renderizado mas invisível
+            const mainRoot = document.getElementById('root');
+            const appContainer = document.querySelector('.mobile-container, .app-container, #app, .app, main');
+            
+            // Verificar presença de elementos específicos da aplicação
+            // Modificado para considerar diferentes estruturas de aplicações
+            const hasAppStructure = mainRoot || appContainer || document.querySelector('main') || document.querySelector('[role="main"]');
+            
+            // Verificar se há texto visível em qualquer lugar da página
+            const hasVisibleText = Array.from(document.querySelectorAll('body *')).some(el => {
+              return el.textContent && 
+                     el.textContent.trim().length > 0 && 
+                     window.getComputedStyle(el).display !== 'none';
+            });
+            
+            // Agora só considera tela branca em casos mais extremos
+            // onde múltiplas condições indicam ausência de conteúdo
+            const isWhiteScreen = !hasContent && 
+                                 !hasVisibleElements && 
+                                 hasOnlyLoader && 
+                                 !hasAppStructure && 
+                                 !hasVisibleText && 
+                                 document.readyState === 'complete';
+
+            if (isWhiteScreen) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'whiteScreen',
+                timestamp: Date.now(),
+                details: {
+                  hasContent,
+                  hasVisibleElements,
+                  hasOnlyLoader,
+                  hasAppStructure,
+                  hasVisibleText,
+                  url: window.location.href,
+                  readyState: document.readyState
+                }
+              }));
+            } else {
+              // Tela está normal
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'screenOk',
+                timestamp: Date.now()
+              }));
+            }
+          } catch (error) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'error',
+              error: error.message,
+              location: 'checkWhiteScreen'
+            }));
+          }
+        })();
+        true;
+      `);
+    } catch (error) {
+      console.error('Erro ao injetar script de verificação de tela branca:', error);
+      Sentry.captureException(error, {
+        tags: {
+          location: 'checkWhiteScreen',
+          type: 'INJECTION_ERROR',
         },
       });
     }
@@ -631,31 +735,58 @@ const App = () => {
 
       // Verificar se é uma mensagem de tela branca
       if (data.type === 'whiteScreen') {
-        console.log('Tela branca detectada, recarregando...');
+        console.log('Tela branca detectada, tentativa:', whiteScreenDetectionAttemptsRef.current);
         
-        // Resetar o estado de loading
-        setLoading(true);
-        setIsWebViewVisible(true);
+        // Incrementar o contador apenas se a página estiver completamente carregada
+        if (data.details?.readyState === 'complete') {
+          whiteScreenDetectionAttemptsRef.current += 1;
+        }
         
-        // Limpar timeout anterior se existir
-        if (retryTimeoutRef.current) {
-          clearTimeout(retryTimeoutRef.current);
-        }
-
-        // Tentar recarregar o WebView
-        if (webViewRef.current) {
-          webViewRef.current.reload();
-        }
-
-        // Configurar um timeout para verificar se o WebView está visível
-        retryTimeoutRef.current = setTimeout(() => {
-          if (!isWebViewVisible) {
-            console.log('WebView ainda não visível após timeout, tentando recarregar novamente...');
-            if (webViewRef.current) {
-              webViewRef.current.reload();
-            }
+        // Registrar no Sentry para diagnóstico
+        Sentry.captureMessage('Tela branca detectada no WebView', {
+          level: 'warning',
+          tags: {
+            location: 'WhiteScreenDetection',
+            attempt: whiteScreenDetectionAttemptsRef.current,
+            platform: Platform.OS
+          },
+          extra: data.details
+        });
+        
+        // Estratégia de recuperação progressiva - só agir após múltiplas tentativas
+        if (whiteScreenDetectionAttemptsRef.current >= 3) {
+          // Reinjetar navegação para a mesma URL após múltiplas detecções
+          if (webViewRef.current && currentNavigationStateRef.current) {
+            console.log('Tentativa 1: Reinjetando navegação para a mesma URL');
+            webViewRef.current.injectJavaScript(`
+              window.location.href = "${currentNavigationStateRef.current.url}";
+              true;
+            `);
           }
-        }, 5000);
+        } else if (whiteScreenDetectionAttemptsRef.current >= 5) {
+          // Segunda tentativa: recarregar o webview
+          console.log('Tentativa 2: Recarregando o WebView');
+          if (webViewRef.current) {
+            webViewRef.current.reload();
+          }
+        } else if (whiteScreenDetectionAttemptsRef.current >= 7) {
+          // Tentativas subsequentes: resetar completamente o WebView
+          console.log('Tentativa 3+: Resetando WebView completamente');
+          setIsWebViewVisible(false);
+          setLoading(true);
+          
+          // Pequeno delay para garantir que o WebView seja removido e recriado
+          setTimeout(() => {
+            setIsWebViewVisible(true);
+            // Forçar nova URL para garantir um carregamento limpo
+            setUrl(BASE_URL + '?reload=' + Date.now());
+          }, 500);
+        }
+      }
+      // Verificar se a tela está ok
+      else if (data.type === 'screenOk') {
+        // Resetar contador de tentativas se a tela estiver ok
+        whiteScreenDetectionAttemptsRef.current = 0;
       }
       // Verificar se é uma mensagem de login
       else if (data.type === 'login' && data.userId) {
@@ -730,6 +861,8 @@ const App = () => {
 
   const onNavigationStateChange = (navState: WebViewNavigation) => {
     try {
+      // Armazenar o estado atual da navegação para referência
+      currentNavigationStateRef.current = navState;
       setWebViewCanGoBack(navState.canGoBack);
     } catch (error) {
       Sentry.captureException(error, {
@@ -746,12 +879,18 @@ const App = () => {
       setLoading(false);
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
+      
+      // Resetar contagem de tentativas de detecção de tela branca
+      whiteScreenDetectionAttemptsRef.current = 0;
 
       // Limpar timeout de retry se existir
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
+
+      // Agendar verificação de tela branca para garantir que tudo carregou corretamente
+      setTimeout(checkWhiteScreen, 1000);
 
       // Verificar se há uma notificação que abriu o app
       if (lastNotificationRef.current) {
@@ -964,6 +1103,49 @@ const App = () => {
             }));
           }
         });
+
+        // Adicionar listener para o evento 'pageshow' (importante para iOS)
+        window.addEventListener('pageshow', function(event) {
+          if (event.persisted) {
+            // A página foi restaurada do cache (bfcache) - comum no iOS
+            console.log('Página restaurada do cache do navegador');
+            
+            // Notificar o app nativo
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'pageshow',
+                persisted: true,
+                timestamp: Date.now()
+              }));
+            }
+            
+            // Verificar se a página está renderizada corretamente
+            setTimeout(function() {
+              const hasContent = document.body.children.length > 0;
+              const hasVisibleElements = Array.from(document.querySelectorAll('*')).some(el => {
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && el.offsetHeight > 0;
+              });
+              
+              if (!hasContent || !hasVisibleElements) {
+                // Página em branco, forçar um recarregamento
+                console.log('Tela em branco detectada após restauração do cache, recarregando');
+                window.location.reload();
+              }
+            }, 500);
+          }
+        });
+
+        // Adicionar detector de erro de renderização
+        window.addEventListener('error', function(event) {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'renderError',
+              message: event.message,
+              timestamp: Date.now()
+            }));
+          }
+        });
       } catch (error) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'error',
@@ -1005,7 +1187,13 @@ const App = () => {
             allowsBackForwardNavigationGestures={true}
             pullToRefreshEnabled={true}
             cacheEnabled={true}
-            cacheMode="LOAD_CACHE_ELSE_NETWORK"
+            cacheMode="LOAD_DEFAULT"
+            incognito={false}
+            thirdPartyCookiesEnabled={true}
+            sharedCookiesEnabled={true}
+            allowsLinkPreview={false}
+            bounces={true}
+            mediaPlaybackRequiresUserAction={false}
             onError={syntheticEvent => {
               const {nativeEvent} = syntheticEvent;
               setIsWebViewVisible(false);

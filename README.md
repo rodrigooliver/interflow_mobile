@@ -27,6 +27,23 @@ Para instruções detalhadas sobre como contribuir para o projeto, consulte o ar
 - Android Studio (para Android)
 - CocoaPods (para iOS)
 
+## Variáveis de Ambiente
+
+Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
+
+```env
+# Sentry Configuration
+SENTRY_DSN=your_sentry_dsn
+SENTRY_DISABLE_AUTO_UPLOAD=true
+SENTRY_ALLOW_FAILURE=true
+
+# OneSignal Configuration
+ONESIGNAL_APP_ID=your_onesignal_app_id
+
+# Base URL Configuration
+BASE_URL=https://interflow.chat/app
+```
+
 ## Instalação
 
 1. Clone o repositório:
