@@ -789,6 +789,20 @@ const App = () => {
         // Resetar contador de tentativas se a tela estiver ok
         whiteScreenDetectionAttemptsRef.current = 0;
       }
+      // Verificar clique em link (específico para Android)
+      else if (data.type === 'linkClicked' && Platform.OS === 'android') {
+        // console.log('Link clicado detectado:', data.url);
+        // Interromper o loading imediatamente para links internos
+        setLoading(false);
+        
+        // Verificar se precisamos atualizar a referência de URL atual
+        if (data.url && data.url !== currentNavigationStateRef.current?.url) {
+          // Atualizar a referência de URL atual para navegação interna
+          if (currentNavigationStateRef.current) {
+            currentNavigationStateRef.current.url = data.url;
+          }
+        }
+      }
       // Verificar se é uma mensagem de login
       else if (data.type === 'login' && data.userId) {
         console.log(
@@ -865,6 +879,15 @@ const App = () => {
       // Armazenar o estado atual da navegação para referência
       currentNavigationStateRef.current = navState;
       setWebViewCanGoBack(navState.canGoBack);
+      
+      // Verificar se a página está carregando
+      if (navState.loading) {
+        // Já está indicado como carregando, não precisa fazer nada
+      } else {
+        // Se não está carregando mas o estado de loading ainda está ativo, desativar
+        // Este é um fix específico para problemas de loading infinito no Android
+        setLoading(false);
+      }
     } catch (error) {
       Sentry.captureException(error, {
         tags: {
@@ -877,6 +900,7 @@ const App = () => {
   // Handler quando o WebView terminar de carregar
   const handleLoadEnd = () => {
     try {
+      // Desativar o loading imediatamente
       setLoading(false);
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
@@ -888,6 +912,21 @@ const App = () => {
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
+      }
+      
+      // Em Android, garantir que o loading esteja completamente desligado
+      if (Platform.OS === 'android') {
+        // Injetar JavaScript para melhorar a navegação interna
+        if (webViewRef.current) {
+          webViewRef.current.injectJavaScript(`
+            // Notificar app que a página foi completamente carregada
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'pageFullyLoaded',
+              url: window.location.href
+            }));
+            true;
+          `);
+        }
       }
 
       // Agendar verificação de tela branca para garantir que tudo carregou corretamente
@@ -922,7 +961,35 @@ const App = () => {
   // Handler quando o WebView começar a carregar
   const handleLoadStart = () => {
     try {
+      // Verificar se é navegação interna ou externa
+      // Para navegação interna, evitamos mostrar o loading
+      if (currentNavigationStateRef.current) {
+        const currentUrl = currentNavigationStateRef.current.url;
+        const currentDomain = extractDomain(currentUrl);
+        const baseDomain = extractDomain(BASE_URL);
+        
+        // Se estamos no mesmo domínio, provavelmente é navegação via SPA
+        // Não mostramos o loading para navegação interna
+        if (currentDomain === baseDomain) {
+          // Nem sequer ativar o loading para navegação interna no mesmo domínio
+          console.log('Navegação interna detectada, evitando loading');
+          return;
+        }
+      }
+      
+      // Se chegou aqui, é navegação externa ou primeira carga, mostrar loading
       setLoading(true);
+      
+      // Configurar um timeout de segurança para o loading
+      // Garante que o loading não fica preso infinitamente, especialmente no Android
+      if (Platform.OS === 'android') {
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+        }
+        retryTimeoutRef.current = setTimeout(() => {
+          setLoading(false);
+        }, 5000); // 5 segundos de timeout máximo para loading
+      }
     } catch (error) {
       console.error(
         'Erro ao processar início de carregamento do WebView:',
@@ -1071,6 +1138,57 @@ const App = () => {
             window.dispatchEvent(nativeAppReadyEvent);
             document.dispatchEvent(nativeAppReadyEvent);
             
+            // Corrigir o comportamento dos links para evitar o problema de carregamento infinito no Android
+            if ('${Platform.OS}' === 'android') {
+              // Interceptar cliques em links para melhorar a navegação no Android
+              document.addEventListener('click', function(e) {
+                // Verificar se o clique foi em um link
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                  target = target.parentElement;
+                }
+                
+                // Se for um link, verificar se é do mesmo domínio
+                if (target && target.tagName === 'A' && target.href) {
+                  const url = target.href;
+                  const currentDomain = window.location.hostname;
+                  
+                  try {
+                    // Verificar se é um link interno (mesmo domínio)
+                    const urlObj = new URL(url);
+                    if (urlObj.hostname === currentDomain) {
+                      // Cancelar o comportamento padrão do link para navegação interna
+                      // isso evita que o WebView inicie o processo de carregamento
+                      e.preventDefault();
+                      
+                      // Notificar o app nativo que um link foi clicado
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'linkClicked',
+                        url: url
+                      }));
+                      
+                      // Para links internos, usar history API para navegação sem carregamento
+                      // Isso funciona para aplicações SPA como React Router
+                      if (url.indexOf('#') > -1) {
+                        // Se for link com hash/âncora, manter comportamento padrão
+                        window.location.href = url;
+                      } else {
+                        // Para outros links internos, tentar navegar com história
+                        const path = url.replace(window.location.origin, '');
+                        window.history.pushState({}, '', path);
+                        
+                        // Disparar evento para o React Router detectar a mudança
+                        const navEvent = new PopStateEvent('popstate');
+                        window.dispatchEvent(navEvent);
+                      }
+                    }
+                  } catch(err) {
+                    console.error('Erro ao processar URL do link:', err);
+                  }
+                }
+              }, false);
+            }
+            
             // Monitorar as mudanças de rota
             if (typeof window.navigate !== 'function') {
               // Tentar detectar o React Router e configurar a função de navegação
@@ -1162,7 +1280,7 @@ const App = () => {
       <StatusBar
         barStyle="light-content"
         backgroundColor="#111827"
-        translucent={false}
+        translucent={Platform.OS === 'android'}
       />
       <SafeAreaView style={styles.container}>
         <View
@@ -1180,6 +1298,32 @@ const App = () => {
             onNavigationStateChange={onNavigationStateChange}
             onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
+            onShouldStartLoadWithRequest={(request) => {
+              // Interceptar requisições para determinar se deve mostrar o loading
+              // Esta função é chamada antes de carregar qualquer URL
+              if (Platform.OS === 'android') {
+                const requestDomain = extractDomain(request.url);
+                const baseDomain = extractDomain(BASE_URL);
+                
+                // Se for do mesmo domínio, provavelmente é navegação interna
+                if (requestDomain === baseDomain) {
+                  // Desativar o loading imediatamente para navegação interna
+                  setLoading(false);
+                }
+              }
+              // Sempre permitir a carga da URL
+              return true;
+            }}
+            onLoadProgress={({nativeEvent}) => {
+              // Fix adicional para o problema de carregamento no Android
+              if (Platform.OS === 'android') {
+                // Quando o progresso estiver em 30% ou mais, já podemos considerar
+                // que a página está carregando corretamente e começar a esconder o loading
+                if (nativeEvent.progress >= 0.3) {
+                  setLoading(false);
+                }
+              }
+            }}
             injectedJavaScript={INJECTED_JAVASCRIPT}
             onMessage={handleWebViewMessage}
             javaScriptEnabled={true}
@@ -1325,8 +1469,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#111827',
-    marginBottom: -20,
-    marginTop: -5,
+    // Remover margem negativa que estava causando o corte na parte inferior do Android
+    marginBottom: Platform.OS === 'android' ? 0 : -20,
+    marginTop: Platform.OS === 'android' ? 15 : -5,
     paddingTop: 0,
   },
   webviewContainer: {
