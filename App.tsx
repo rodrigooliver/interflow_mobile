@@ -208,7 +208,7 @@ const App = () => {
     try {
       // Se o app está indo para background
       if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
-        console.log('App foi para o background');
+        // Inicia a contagem do tempo em background apenas neste momento
         backgroundTimeRef.current = Date.now();
       }
       
@@ -217,16 +217,17 @@ const App = () => {
         appState.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        console.log('App voltou para o primeiro plano');
+        // Calcula o tempo apenas se tiver um valor de início válido
         const timeInBackground = backgroundTimeRef.current ? (Date.now() - backgroundTimeRef.current) : 0;
-        console.log(`Tempo em background: ${timeInBackground / 1000} segundos`);
+        
+        // Limpa o valor do tempo de background após o cálculo
+        backgroundTimeRef.current = null;
         
         // Resetar contagem de tentativas de detecção
         whiteScreenDetectionAttemptsRef.current = 0;
         
-        // Se ficou muito tempo em background (mais de 10 minutos), força um reload para garantir
-        if (timeInBackground > 10 * 60 * 1000) {
-          console.log('Detectado longo período em background, recarregando WebView');
+        // Se ficou muito tempo em background (mais de 3 horas), força um reload para garantir
+        if (timeInBackground > 3 * 60 * 60 * 1000) {
           if (webViewRef.current) {
             webViewRef.current.reload();
           }
