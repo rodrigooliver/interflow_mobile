@@ -1084,10 +1084,28 @@ const App = () => {
             touch-action: manipulation;
             user-select: none;
             padding: 2px 0 !important;
+            overflow: hidden !important;
+            position: fixed !important;
+            width: 100% !important;
+            height: 100% !important;
           }
           
           ::-webkit-scrollbar {
-            display: none;
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
+          }
+          
+          * {
+            -ms-overflow-style: none !important;
+            scrollbar-width: none !important;
+            overscroll-behavior: none !important;
+          }
+          
+          html {
+            overflow: hidden !important;
+            overscroll-behavior: none !important;
+            height: 100% !important;
           }
           
           input, textarea {
@@ -1114,6 +1132,10 @@ const App = () => {
 
           .platform-android {
             /* Estilos específicos para Android */
+            overflow: hidden !important;
+            position: fixed !important;
+            width: 100% !important;
+            height: 100% !important;
           }
         \`;
         document.head.appendChild(style);
@@ -1130,6 +1152,26 @@ const App = () => {
         document.addEventListener('DOMContentLoaded', function() {
           try {
             document.body.style.margin = '2px 0';
+            
+            // Desabilitar completamente a rolagem no Android
+            if ('${Platform.OS}' === 'android') {
+              // Prevenir qualquer tipo de rolagem no documento
+              document.body.addEventListener('touchmove', function(e) {
+                e.preventDefault();
+              }, { passive: false });
+              
+              // Evitar que a página role quando o teclado virtual aparecer
+              window.addEventListener('resize', function() {
+                document.body.style.height = window.innerHeight + 'px';
+              });
+              
+              // Desativar eventos de rolagem
+              ['scroll', 'mousewheel', 'wheel', 'DOMMouseScroll'].forEach(function(event) {
+                window.addEventListener(event, function(e) {
+                  e.preventDefault();
+                }, { passive: false });
+              });
+            }
             
             // Disparar evento customizado para notificar que o app está pronto
             const nativeAppReadyEvent = new CustomEvent('nativeAppReady', {
@@ -1338,6 +1380,12 @@ const App = () => {
             sharedCookiesEnabled={true}
             allowsLinkPreview={false}
             bounces={true}
+            scrollEnabled={false}
+            overScrollMode="never"
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            contentInset={{top: 0, left: 0, bottom: 0, right: 0}}
+            automaticallyAdjustContentInsets={false}
             mediaPlaybackRequiresUserAction={false}
             onError={syntheticEvent => {
               const {nativeEvent} = syntheticEvent;
@@ -1483,12 +1531,13 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
-    marginTop: -2,
-    marginBottom: -2,
+    marginTop: 0,
+    marginBottom: Platform.OS === 'android' ? 0 : -2,
     height: '100%',
     width: '100%',
     borderTopLeftRadius: 25,
     borderTopRightRadius: 25,
+    overflow: 'hidden', // Para garantir que o conteúdo não saia dos limites
   },
   loadingContainer: {
     position: 'absolute',
