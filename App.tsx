@@ -19,6 +19,8 @@ import {
   AppStateStatus,
   Text,
   TouchableOpacity,
+  PermissionsAndroid,
+  type Permission,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {LogLevel, OneSignal} from 'react-native-onesignal';
@@ -100,6 +102,43 @@ const extractPath = (url: string): string => {
   }
 };
 
+// Função para solicitar permissões de áudio no Android
+const requestAudioPermissions = async () => {
+  if (Platform.OS === 'android') {
+    try {
+      const granted = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        'android.permission.MODIFY_AUDIO_SETTINGS' as Permission,
+      ]);
+
+      const recordAudioGranted =
+        granted['android.permission.RECORD_AUDIO'] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+      const modifyAudioGranted =
+        granted['android.permission.MODIFY_AUDIO_SETTINGS' as keyof typeof granted] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+
+      if (recordAudioGranted && modifyAudioGranted) {
+        console.log('Permissões de áudio concedidas');
+        return true;
+      } else {
+        console.log('Permissões de áudio negadas');
+        return false;
+      }
+    } catch (err) {
+      console.error('Erro ao solicitar permissões de áudio:', err);
+      Sentry.captureException(err, {
+        tags: {
+          location: 'requestAudioPermissions',
+          type: 'PERMISSIONS',
+        },
+      });
+      return false;
+    }
+  }
+  return true; // iOS não precisa solicitar permissões dessa forma
+};
+
 const App = () => {
   const webViewRef = useRef<WebView | null>(null);
   const appState = useRef<AppStateStatus>(AppState.currentState);
@@ -112,14 +151,13 @@ const App = () => {
   const appStateSubscription = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
   const backHandlerSubscription = useRef<ReturnType<typeof BackHandler.addEventListener> | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const checkWhiteScreenTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const backgroundTimeRef = useRef<number | null>(null);
   const currentNavigationStateRef = useRef<WebViewNavigation | null>(null);
-  const whiteScreenDetectionAttemptsRef = useRef<number>(0);
   const [error, setError] = useState<{
     type: 'offline' | 'general';
     message: string;
   } | null>(null);
+  const [isInChatPage, setIsInChatPage] = useState(false);
 
   // Limpar recursos quando o componente for desmontado
   useEffect(() => {
@@ -167,6 +205,9 @@ const App = () => {
 
   useEffect(() => {
     initOneSignal();
+    
+    // Solicitar permissões de áudio
+    requestAudioPermissions();
 
     appStateSubscription.current = AppState.addEventListener(
       'change',
@@ -223,9 +264,6 @@ const App = () => {
         // Limpa o valor do tempo de background após o cálculo
         backgroundTimeRef.current = null;
         
-        // Resetar contagem de tentativas de detecção
-        whiteScreenDetectionAttemptsRef.current = 0;
-        
         // Se ficou muito tempo em background (mais de 3 horas), força um reload para garantir
         if (timeInBackground > 3 * 60 * 60 * 1000) {
           if (webViewRef.current) {
@@ -234,8 +272,20 @@ const App = () => {
           return;
         }
         
-        // Verificar integridade do WebView após retornar do background
-        scheduleWhiteScreenDetection();
+        // Verificação específica para iOS após retorno do background
+        if (Platform.OS === 'ios' && webViewRef.current) {
+          // Temporariamente desabilitado - usando apenas onContentProcessDidTerminate
+          // Verificação imediata para iOS para detectar perda de conteúdo
+          // setTimeout(() => {
+          //   if (webViewRef.current && !loading && isWebViewVisible) {
+          //     console.log(`iOS: Verificação imediata após retorno do background (tempo em background: ${Math.round(timeInBackground / 1000)}s)`);
+          //     checkWhiteScreen();
+          //   }
+          // }, 100); // Verificação muito rápida
+        }
+        
+        // Verificar integridade do WebView após retornar do background - DESABILITADO
+        // scheduleWhiteScreenDetection();
       }
 
       appState.current = nextAppState;
@@ -248,29 +298,6 @@ const App = () => {
         },
       });
     }
-  };
-
-  // Função para agendar detecções de tela branca em sequência
-  const scheduleWhiteScreenDetection = () => {
-    if (checkWhiteScreenTimeoutRef.current) {
-      clearTimeout(checkWhiteScreenTimeoutRef.current);
-    }
-
-    // Reduzir a frequência das verificações para evitar sobrecarregar a WebView
-    const checkTimes = [1000, 3000];
-    
-    // Função recursiva para verificar em intervalos sequenciais
-    const scheduleCheck = (index: number) => {
-      if (index >= checkTimes.length) return;
-      
-      checkWhiteScreenTimeoutRef.current = setTimeout(() => {
-        checkWhiteScreen();
-        scheduleCheck(index + 1);
-      }, checkTimes[index]);
-    };
-    
-    // Iniciar sequência de verificações
-    scheduleCheck(0);
   };
 
   // Função para verificar URL pendente após retorno do background
@@ -324,108 +351,6 @@ const App = () => {
         tags: {
           location: 'checkPendingUrl',
           type: 'ASYNC_STORAGE',
-        },
-      });
-    }
-  };
-
-  // Função para verificar se o WebView está com tela branca
-  const checkWhiteScreen = () => {
-    if (!webViewRef.current || !isWebViewVisible) {
-      return;
-    }
-    
-    try {
-      // Injetar JavaScript para verificar diversos indicadores de tela branca
-      webViewRef.current.injectJavaScript(`
-        (function() {
-          try {
-            // Verificar se o body está vazio ou tem apenas elementos vazios
-            const body = document.body;
-            const hasContent = body.children.length > 0 && 
-              Array.from(body.children).some(el => 
-                el.offsetHeight > 0 && el.offsetWidth > 0
-              );
-            
-            // Verificar se há elementos visíveis com conteúdo real
-            // Modificado para ser menos sensível e evitar falsos positivos
-            const visibleElements = document.querySelectorAll('body *');
-            const hasVisibleElements = Array.from(visibleElements).some(el => {
-              if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'META' || el.tagName === 'LINK') {
-                return false;
-              }
-              const style = window.getComputedStyle(el);
-              return style.display !== 'none' && 
-                     style.visibility !== 'hidden' && 
-                     el.offsetHeight > 10 && 
-                     el.offsetWidth > 10;
-            });
-
-            // Verificar se o body está vazio ou só tem um loader
-            // Modificado para ser mais tolerante com loaders
-            const hasOnlyLoader = document.body.innerHTML.trim() === '';
-
-            // Verificação adicional para detectar conteúdo renderizado mas invisível
-            const mainRoot = document.getElementById('root');
-            const appContainer = document.querySelector('.mobile-container, .app-container, #app, .app, main');
-            
-            // Verificar presença de elementos específicos da aplicação
-            // Modificado para considerar diferentes estruturas de aplicações
-            const hasAppStructure = mainRoot || appContainer || document.querySelector('main') || document.querySelector('[role="main"]');
-            
-            // Verificar se há texto visível em qualquer lugar da página
-            const hasVisibleText = Array.from(document.querySelectorAll('body *')).some(el => {
-              return el.textContent && 
-                     el.textContent.trim().length > 0 && 
-                     window.getComputedStyle(el).display !== 'none';
-            });
-            
-            // Agora só considera tela branca em casos mais extremos
-            // onde múltiplas condições indicam ausência de conteúdo
-            const isWhiteScreen = !hasContent && 
-                                 !hasVisibleElements && 
-                                 hasOnlyLoader && 
-                                 !hasAppStructure && 
-                                 !hasVisibleText && 
-                                 document.readyState === 'complete';
-
-            if (isWhiteScreen) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'whiteScreen',
-                timestamp: Date.now(),
-                details: {
-                  hasContent,
-                  hasVisibleElements,
-                  hasOnlyLoader,
-                  hasAppStructure,
-                  hasVisibleText,
-                  url: window.location.href,
-                  readyState: document.readyState
-                }
-              }));
-            } else {
-              // Tela está normal
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'screenOk',
-                timestamp: Date.now()
-              }));
-            }
-          } catch (error) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'error',
-              error: error.message,
-              location: 'checkWhiteScreen'
-            }));
-          }
-        })();
-        true;
-      `);
-    } catch (error) {
-      console.error('Erro ao injetar script de verificação de tela branca:', error);
-      Sentry.captureException(error, {
-        tags: {
-          location: 'checkWhiteScreen',
-          type: 'INJECTION_ERROR',
         },
       });
     }
@@ -730,67 +655,15 @@ const App = () => {
   };
 
   // Função para lidar com mensagens do WebView
+  // Nota: Para problemas de tela branca/crash de processo, usamos:
+  // - iOS: onContentProcessDidTerminate (quando processo de conteúdo é terminado)
+  // - Android: onRenderProcessGone (quando processo de renderização trava/termina)
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
 
-      // Verificar se é uma mensagem de tela branca
-      if (data.type === 'whiteScreen') {
-        console.log('Tela branca detectada, tentativa:', whiteScreenDetectionAttemptsRef.current);
-        
-        // Incrementar o contador apenas se a página estiver completamente carregada
-        if (data.details?.readyState === 'complete') {
-          whiteScreenDetectionAttemptsRef.current += 1;
-        }
-        
-        // Registrar no Sentry para diagnóstico
-        Sentry.captureMessage('Tela branca detectada no WebView', {
-          level: 'warning',
-          tags: {
-            location: 'WhiteScreenDetection',
-            attempt: whiteScreenDetectionAttemptsRef.current,
-            platform: Platform.OS
-          },
-          extra: data.details
-        });
-        
-        // Estratégia de recuperação progressiva - só agir após múltiplas tentativas
-        if (whiteScreenDetectionAttemptsRef.current >= 3) {
-          // Reinjetar navegação para a mesma URL após múltiplas detecções
-          if (webViewRef.current && currentNavigationStateRef.current) {
-            console.log('Tentativa 1: Reinjetando navegação para a mesma URL');
-            webViewRef.current.injectJavaScript(`
-              window.location.href = "${currentNavigationStateRef.current.url}";
-              true;
-            `);
-          }
-        } else if (whiteScreenDetectionAttemptsRef.current >= 5) {
-          // Segunda tentativa: recarregar o webview
-          console.log('Tentativa 2: Recarregando o WebView');
-          if (webViewRef.current) {
-            webViewRef.current.reload();
-          }
-        } else if (whiteScreenDetectionAttemptsRef.current >= 7) {
-          // Tentativas subsequentes: resetar completamente o WebView
-          console.log('Tentativa 3+: Resetando WebView completamente');
-          setIsWebViewVisible(false);
-          setLoading(true);
-          
-          // Pequeno delay para garantir que o WebView seja removido e recriado
-          setTimeout(() => {
-            setIsWebViewVisible(true);
-            // Forçar nova URL para garantir um carregamento limpo
-            setUrl(BASE_URL + '?reload=' + Date.now());
-          }, 500);
-        }
-      }
-      // Verificar se a tela está ok
-      else if (data.type === 'screenOk') {
-        // Resetar contador de tentativas se a tela estiver ok
-        whiteScreenDetectionAttemptsRef.current = 0;
-      }
       // Verificar clique em link (específico para Android)
-      else if (data.type === 'linkClicked' && Platform.OS === 'android') {
+      if (data.type === 'linkClicked' && Platform.OS === 'android') {
         // console.log('Link clicado detectado:', data.url);
         // Interromper o loading imediatamente para links internos
         setLoading(false);
@@ -818,6 +691,19 @@ const App = () => {
         // Logout do OneSignal
         OneSignal.logout();
       }
+      // Verificar se a página foi completamente carregada
+      else if (data.type === 'pageFullyLoaded') {
+        console.log('Página completamente carregada:', data.url);
+      }
+      // Verificar se o gesto do iOS foi simulado com sucesso
+      else if (data.type === 'iosGestureSimulated') {
+        console.log('Gesto de voltar do iOS simulado com sucesso');
+      }
+      // Verificar se o botão voltar do chat foi simulado
+      else if (data.type === 'chatBackButtonSimulated') {
+        console.log('Botão voltar do chat simulado com sucesso');
+        // Opcional: Executar alguma ação adicional se necessário
+      }
     } catch (error) {
       console.error('Erro ao processar mensagem do WebView:', error);
       Sentry.captureException(error, {
@@ -830,6 +716,52 @@ const App = () => {
 
   const handleBackPress = () => {
     try {
+      // Se estivermos na página de chat, enviar mensagem para o WebView simular o clique no botão voltar
+      if (isInChatPage) {
+        if (webViewRef.current) {
+          // Enviar mensagem para o WebView executar a função handleBackClick
+          webViewRef.current.injectJavaScript(`
+            (function() {
+              try {
+                // Verificar se existe a função handleBackClick ou se podemos simular o clique no botão
+                const backButton = document.querySelector('[data-testid="back-button"], .back-button, button[aria-label*="voltar"], button[aria-label*="back"]');
+                if (backButton && typeof backButton.click === 'function') {
+                  backButton.click();
+                  return true;
+                }
+                
+                // Se não encontrou o botão, tentar navegar para /app/chats
+                if (window.navigate) {
+                  window.navigate('/app/chats');
+                } else if (window.history && window.history.pushState) {
+                  window.history.pushState({}, '', '/app/chats');
+                  const navEvent = new PopStateEvent('popstate');
+                  window.dispatchEvent(navEvent);
+                } else {
+                  window.location.href = '${BASE_URL}/chats';
+                }
+                
+                // Notificar o app nativo que o gesto foi simulado
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'chatBackButtonSimulated',
+                  timestamp: Date.now()
+                }));
+              } catch (error) {
+                console.error('Erro ao simular botão voltar do chat:', error);
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'error',
+                  error: error.message,
+                  location: 'chatBackButtonSimulation'
+                }));
+              }
+            })();
+            true;
+          `);
+        }
+        return true; // Interceptar o evento de voltar
+      }
+      
+      // Comportamento padrão para outras páginas
       if (webViewCanGoBack && webViewRef.current) {
         webViewRef.current.goBack();
         return true;
@@ -880,6 +812,15 @@ const App = () => {
       currentNavigationStateRef.current = navState;
       setWebViewCanGoBack(navState.canGoBack);
       
+      // Detectar se estamos na página de chat
+      const url = navState.url;
+      const isChatPage = url.includes('/app/chat/') || (url.includes('/app/chats/') && !!url.match(/\/app\/chats\/[^/]+$/));
+      setIsInChatPage(isChatPage);
+      
+      if (isChatPage) {
+        console.log('Página de chat detectada, desabilitando gesto nativo do iOS:', url);
+      }
+      
       // Verificar se a página está carregando
       if (navState.loading) {
         // Já está indicado como carregando, não precisa fazer nada
@@ -904,33 +845,6 @@ const App = () => {
       setLoading(false);
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
-      
-      // Resetar contagem de tentativas de detecção de tela branca
-      whiteScreenDetectionAttemptsRef.current = 0;
-
-      // Limpar timeout de retry se existir
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
-      }
-      
-      // Em Android, garantir que o loading esteja completamente desligado
-      if (Platform.OS === 'android') {
-        // Injetar JavaScript para melhorar a navegação interna
-        if (webViewRef.current) {
-          webViewRef.current.injectJavaScript(`
-            // Notificar app que a página foi completamente carregada
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'pageFullyLoaded',
-              url: window.location.href
-            }));
-            true;
-          `);
-        }
-      }
-
-      // Agendar verificação de tela branca para garantir que tudo carregou corretamente
-      setTimeout(checkWhiteScreen, 1000);
 
       // Verificar se há uma notificação que abriu o app
       if (lastNotificationRef.current) {
@@ -1080,14 +994,9 @@ const App = () => {
         style.innerHTML = \`
           body {
             -webkit-tap-highlight-color: transparent;
-            overscroll-behavior: none;
             touch-action: manipulation;
             user-select: none;
             padding: 2px 0 !important;
-            overflow: hidden !important;
-            position: fixed !important;
-            width: 100% !important;
-            height: 100% !important;
           }
           
           ::-webkit-scrollbar {
@@ -1099,13 +1008,6 @@ const App = () => {
           * {
             -ms-overflow-style: none !important;
             scrollbar-width: none !important;
-            overscroll-behavior: none !important;
-          }
-          
-          html {
-            overflow: hidden !important;
-            overscroll-behavior: none !important;
-            height: 100% !important;
           }
           
           input, textarea {
@@ -1127,7 +1029,7 @@ const App = () => {
 
           /* Estilos específicos para cada plataforma */
           .platform-ios {
-            /* Estilos específicos para iOS */
+            /* Estilos específicos para iOS - permitir scroll natural */
           }
 
           .platform-android {
@@ -1136,6 +1038,7 @@ const App = () => {
             position: fixed !important;
             width: 100% !important;
             height: 100% !important;
+            overscroll-behavior: none !important;
           }
         \`;
         document.head.appendChild(style);
@@ -1170,6 +1073,22 @@ const App = () => {
                 window.addEventListener(event, function(e) {
                   e.preventDefault();
                 }, { passive: false });
+              });
+            } else if ('${Platform.OS}' === 'ios') {
+              // iOS: manter comportamento de scroll natural para inputs
+              // Remover qualquer style que impeça o scroll quando teclado aparecer
+              document.documentElement.style.overflow = '';
+              document.body.style.overflow = '';
+              document.body.style.position = '';
+              document.body.style.height = '';
+              
+              // Garantir que inputs sejam visíveis quando focados
+              document.addEventListener('focusin', function(e) {
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+                  setTimeout(function() {
+                    e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 300); // Aguardar o teclado aparecer
+                }
               });
             }
             
@@ -1279,21 +1198,6 @@ const App = () => {
                 timestamp: Date.now()
               }));
             }
-            
-            // Verificar se a página está renderizada corretamente
-            setTimeout(function() {
-              const hasContent = document.body.children.length > 0;
-              const hasVisibleElements = Array.from(document.querySelectorAll('*')).some(el => {
-                const style = window.getComputedStyle(el);
-                return style.display !== 'none' && el.offsetHeight > 0;
-              });
-              
-              if (!hasContent || !hasVisibleElements) {
-                // Página em branco, forçar um recarregamento
-                console.log('Tela em branco detectada após restauração do cache, recarregando');
-                window.location.reload();
-              }
-            }, 500);
           }
         });
 
@@ -1371,7 +1275,7 @@ const App = () => {
             javaScriptEnabled={true}
             domStorageEnabled={true}
             startInLoadingState={true}
-            allowsBackForwardNavigationGestures={true}
+            allowsBackForwardNavigationGestures={!isInChatPage}
             pullToRefreshEnabled={true}
             cacheEnabled={true}
             cacheMode="LOAD_DEFAULT"
@@ -1380,13 +1284,16 @@ const App = () => {
             sharedCookiesEnabled={true}
             allowsLinkPreview={false}
             bounces={true}
-            scrollEnabled={false}
+            scrollEnabled={Platform.OS === 'ios' ? true : false}
             overScrollMode="never"
             showsVerticalScrollIndicator={false}
             showsHorizontalScrollIndicator={false}
             contentInset={{top: 0, left: 0, bottom: 0, right: 0}}
-            automaticallyAdjustContentInsets={false}
+            automaticallyAdjustContentInsets={Platform.OS === 'ios' ? true : false}
             mediaPlaybackRequiresUserAction={false}
+            keyboardDisplayRequiresUserAction={false}
+            allowsProtectedMedia={true}
+            geolocationEnabled={true}
             onError={syntheticEvent => {
               const {nativeEvent} = syntheticEvent;
               setIsWebViewVisible(false);
@@ -1466,6 +1373,62 @@ const App = () => {
                 }
               });
             }}
+            onContentProcessDidTerminate={() => {
+              // Esta função é chamada quando o processo de conteúdo do WebView é terminado
+              // Isso é comum no iOS quando o app fica em background por um tempo
+              // console.log('iOS: Processo de conteúdo do WebView foi terminado, recarregando...');
+              
+              Sentry.captureMessage('iOS WebView content process terminated', {
+                level: 'warning',
+                tags: {
+                  platform: Platform.OS,
+                  location: 'onContentProcessDidTerminate'
+                },
+                extra: {
+                  url: currentNavigationStateRef.current?.url || 'unknown',
+                  timestamp: new Date().toISOString()
+                }
+              });
+              
+              // Recarregar o WebView imediatamente
+              if (webViewRef.current) {
+                // console.log('Recarregando WebView após terminação do processo de conteúdo');
+                webViewRef.current.reload();
+              }
+              
+              // Garantir que o loading seja mostrado
+              setLoading(true);
+            }}
+            onRenderProcessGone={(syntheticEvent) => {
+              // Esta função é chamada quando o processo de renderização do WebView trava 
+              // ou é terminado pelo sistema operacional no Android (API 26+)
+              const { nativeEvent } = syntheticEvent;
+              // console.log('Android: Processo de renderização do WebView foi terminado/travou, recarregando...');
+              // console.log('Detalhes do crash:', nativeEvent.didCrash);
+              
+              Sentry.captureMessage('Android WebView render process gone', {
+                level: 'warning',
+                tags: {
+                  platform: Platform.OS,
+                  location: 'onRenderProcessGone',
+                  didCrash: nativeEvent.didCrash
+                },
+                extra: {
+                  didCrash: nativeEvent.didCrash,
+                  url: currentNavigationStateRef.current?.url || 'unknown',
+                  timestamp: new Date().toISOString()
+                }
+              });
+              
+              // Recarregar o WebView imediatamente
+              if (webViewRef.current) {
+                // console.log('Recarregando WebView após processo de renderização terminado');
+                webViewRef.current.reload();
+              }
+              
+              // Garantir que o loading seja mostrado
+              setLoading(true);
+            }}
             renderLoading={() => (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#ffffff" />
@@ -1519,12 +1482,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
     // Remover margem negativa que estava causando o corte na parte inferior do Android
     marginBottom: Platform.OS === 'android' ? 0 : -20,
-    marginTop: Platform.OS === 'android' ? 15 : -5,
-    paddingTop: 0,
+    marginTop: Platform.OS === 'android' ? 0 : -5,
+    paddingTop: Platform.OS === 'android' ? 20 : 0,
   },
   webviewContainer: {
     flex: 1,
     marginVertical: 2,
+    backgroundColor: '#111827',
   },
   iosWebviewContainer: {
     paddingBottom: 1,
@@ -1537,6 +1501,7 @@ const styles = StyleSheet.create({
     width: '100%',
     borderTopLeftRadius: 25,
     borderTopRightRadius: 25,
+    backgroundColor: '#111827',
     overflow: 'hidden', // Para garantir que o conteúdo não saia dos limites
   },
   loadingContainer: {
