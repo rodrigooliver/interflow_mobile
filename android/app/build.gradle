@@ -89,8 +89,8 @@ android {
         applicationId "com.interflow_mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.1"
+        versionCode 3
+        versionName "1.2"
     }
     signingConfigs {
         debug {
@@ -119,6 +119,9 @@ dependencies {
     implementation("com.facebook.react:react-android")
     implementation platform('com.google.firebase:firebase-bom:33.13.0')
     implementation 'com.google.firebase:firebase-analytics'
+    
+    // Suporte para Edge-to-Edge no Android 15 (SDK 35+)
+    implementation "androidx.core:core-ktx:1.15.0"
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
