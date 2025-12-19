@@ -3,7 +3,6 @@ package com.interflow_mobile
 import android.os.Build
 import android.os.Bundle
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -25,26 +24,17 @@ class MainActivity : ReactActivity() {
       DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
   /**
-   * Habilita o modo Edge-to-Edge para compatibilidade com Android 15 (SDK 35+)
-   * Usa APIs modernas que não estão descontinuadas
+   * Configura a aparência das barras do sistema
    */
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     
-    // Habilita edge-to-edge para compatibilidade com Android 15+
-    WindowCompat.setDecorFitsSystemWindows(window, false)
+    // Mantém o comportamento padrão onde o conteúdo não vai por baixo das barras
+    WindowCompat.setDecorFitsSystemWindows(window, true)
     
-    // Configura as barras do sistema usando WindowInsetsController (API moderna)
-    val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
-    windowInsetsController?.apply {
-      // Define o comportamento das barras do sistema
-      systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-      
-      // Torna as barras transparentes sem usar APIs descontinuadas
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        window.isNavigationBarContrastEnforced = false
-        window.isStatusBarContrastEnforced = false
-      }
+    // Configura a cor da barra de navegação para combinar com o app
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      window.navigationBarColor = android.graphics.Color.parseColor("#111827")
     }
   }
 }

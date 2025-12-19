@@ -7,7 +7,6 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   BackHandler,
@@ -20,12 +19,14 @@ import {
   Text,
   TouchableOpacity,
   PermissionsAndroid,
+  Linking,
   type Permission,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {LogLevel, OneSignal} from 'react-native-onesignal';
 import SplashScreen from 'react-native-splash-screen';
-import {SafeAreaProvider} from 'react-native-safe-area-context';
+import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
+import {KeyboardAwareScrollView} from 'react-native-keyboard-aware-scroll-view';
 import {
   WebViewNavigation,
   WebViewMessageEvent,
@@ -99,6 +100,174 @@ const extractPath = (url: string): string => {
   } catch (e) {
     console.error('Erro ao extrair caminho:', e);
     return '/';
+  }
+};
+
+// Domínios permitidos do Interflow (links internos)
+const ALLOWED_DOMAINS = [
+  'interflow.chat',
+  'app.interflow.chat',
+  'www.interflow.chat',
+  extractDomain(BASE_URL), // Adiciona o domínio do BASE_URL configurado
+].filter(Boolean);
+
+// Domínios de serviços externos que devem permanecer no WebView
+// Esses são recursos que carregam automaticamente (iframes, scripts, etc.)
+const WEBVIEW_ALLOWED_SERVICES = [
+  // Stripe (pagamentos)
+  'stripe.com',
+  'js.stripe.com',
+  'm.stripe.com',
+  'connect-js.stripe.com',
+  'checkout.stripe.com',
+  'hooks.stripe.com',
+  'api.stripe.com',
+  'files.stripe.com',
+  // Google (OAuth, reCAPTCHA, analytics)
+  'accounts.google.com',
+  'www.google.com',
+  'www.gstatic.com',
+  'apis.google.com',
+  'recaptcha.net',
+  'www.recaptcha.net',
+  // Apple (Sign in with Apple)
+  'appleid.apple.com',
+  // Outros serviços comuns
+  'cdn.jsdelivr.net',
+  'cdnjs.cloudflare.com',
+  'unpkg.com',
+];
+
+// Função para verificar se uma URL é de um serviço que deve ficar no WebView
+const isWebViewAllowedService = (url: string): boolean => {
+  const domain = extractDomain(url);
+  return WEBVIEW_ALLOWED_SERVICES.some(
+    allowedDomain =>
+      domain === allowedDomain || domain.endsWith('.' + allowedDomain),
+  );
+};
+
+// Função para verificar se uma URL é do domínio Interflow
+const isInterflowDomain = (url: string): boolean => {
+  const domain = extractDomain(url);
+  return ALLOWED_DOMAINS.some(
+    allowedDomain =>
+      domain === allowedDomain || domain.endsWith('.' + allowedDomain),
+  );
+};
+
+// Função para verificar e abrir links externos
+const handleExternalLink = async (url: string): Promise<boolean> => {
+  try {
+    const lowerUrl = url.toLowerCase();
+
+    // Verificar se é um link de telefone
+    if (lowerUrl.startsWith('tel:')) {
+      console.log('Abrindo link de telefone:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link de email
+    if (lowerUrl.startsWith('mailto:')) {
+      console.log('Abrindo link de email:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link de SMS
+    if (lowerUrl.startsWith('sms:')) {
+      console.log('Abrindo link de SMS:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link do WhatsApp
+    if (
+      lowerUrl.includes('wa.me') ||
+      lowerUrl.includes('api.whatsapp.com') ||
+      lowerUrl.includes('whatsapp.com') ||
+      lowerUrl.startsWith('whatsapp://')
+    ) {
+      console.log('Abrindo link do WhatsApp:', url);
+      
+      // Tentar abrir o WhatsApp diretamente
+      const whatsappUrl = url.startsWith('whatsapp://') ? url : url;
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+      } else {
+        // Fallback: abrir no navegador
+        await Linking.openURL(url);
+      }
+      return true;
+    }
+
+    // Verificar se é um link do Telegram
+    if (
+      lowerUrl.includes('t.me') ||
+      lowerUrl.includes('telegram.me') ||
+      lowerUrl.startsWith('tg://')
+    ) {
+      console.log('Abrindo link do Telegram:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link do Instagram
+    if (
+      lowerUrl.includes('instagram.com') ||
+      lowerUrl.startsWith('instagram://')
+    ) {
+      console.log('Abrindo link do Instagram:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link do Facebook
+    if (
+      lowerUrl.includes('facebook.com') ||
+      lowerUrl.includes('fb.com') ||
+      lowerUrl.startsWith('fb://')
+    ) {
+      console.log('Abrindo link do Facebook:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // Verificar se é um link externo (não é do Interflow)
+    if (
+      (lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')) &&
+      !isInterflowDomain(url)
+    ) {
+      console.log('Abrindo link externo no navegador:', url);
+      await Linking.openURL(url);
+      return true;
+    }
+
+    // É um link interno do Interflow, deixar o WebView processar
+    return false;
+  } catch (error) {
+    console.error('Erro ao abrir link externo:', error);
+    Sentry.captureException(error, {
+      tags: {
+        location: 'handleExternalLink',
+        type: 'EXTERNAL_LINK',
+      },
+      extra: {
+        url,
+      },
+    });
+    
+    // Tentar abrir no navegador como fallback
+    try {
+      await Linking.openURL(url);
+      return true;
+    } catch (fallbackError) {
+      console.error('Erro no fallback ao abrir link:', fallbackError);
+      return false;
+    }
   }
 };
 
@@ -1034,10 +1203,6 @@ const App = () => {
 
           .platform-android {
             /* Estilos específicos para Android */
-            overflow: hidden !important;
-            position: fixed !important;
-            width: 100% !important;
-            height: 100% !important;
             overscroll-behavior: none !important;
           }
         \`;
@@ -1056,24 +1221,36 @@ const App = () => {
           try {
             document.body.style.margin = '2px 0';
             
-            // Desabilitar completamente a rolagem no Android
+            // Configurações específicas para Android
             if ('${Platform.OS}' === 'android') {
-              // Prevenir qualquer tipo de rolagem no documento
-              document.body.addEventListener('touchmove', function(e) {
-                e.preventDefault();
-              }, { passive: false });
+              // Armazenar a posição de scroll original
+              var originalScrollPosition = 0;
               
-              // Evitar que a página role quando o teclado virtual aparecer
-              window.addEventListener('resize', function() {
-                document.body.style.height = window.innerHeight + 'px';
+              // Garantir que inputs sejam visíveis quando focados (teclado aberto)
+              document.addEventListener('focusin', function(e) {
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+                  // Salvar a posição atual do scroll
+                  originalScrollPosition = window.scrollY || document.documentElement.scrollTop || 0;
+                  
+                  // Aguardar o teclado aparecer e rolar para o input
+                  setTimeout(function() {
+                    e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 300);
+                }
               });
               
-              // Desativar eventos de rolagem
-              ['scroll', 'mousewheel', 'wheel', 'DOMMouseScroll'].forEach(function(event) {
-                window.addEventListener(event, function(e) {
-                  e.preventDefault();
-                }, { passive: false });
+              // Restaurar a posição quando o input perde o foco
+              document.addEventListener('focusout', function(e) {
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+                  // Aguardar o teclado fechar e restaurar a posição
+                  setTimeout(function() {
+                    window.scrollTo({ top: originalScrollPosition, behavior: 'smooth' });
+                  }, 100);
+                }
               });
+              
+              // Desabilitar overscroll (pull-to-refresh indesejado)
+              document.body.style.overscrollBehavior = 'none';
             } else if ('${Platform.OS}' === 'ios') {
               // iOS: manter comportamento de scroll natural para inputs
               // Remover qualquer style que impeça o scroll quando teclado aparecer
@@ -1082,12 +1259,28 @@ const App = () => {
               document.body.style.position = '';
               document.body.style.height = '';
               
+              // Armazenar a posição de scroll original
+              var originalScrollPositionIOS = 0;
+              
               // Garantir que inputs sejam visíveis quando focados
               document.addEventListener('focusin', function(e) {
                 if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+                  // Salvar a posição atual do scroll
+                  originalScrollPositionIOS = window.scrollY || document.documentElement.scrollTop || 0;
+                  
                   setTimeout(function() {
                     e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                   }, 300); // Aguardar o teclado aparecer
+                }
+              });
+              
+              // Restaurar a posição quando o input perde o foco
+              document.addEventListener('focusout', function(e) {
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+                  // Aguardar o teclado fechar e restaurar a posição
+                  setTimeout(function() {
+                    window.scrollTo({ top: originalScrollPositionIOS, behavior: 'smooth' });
+                  }, 100);
                 }
               });
             }
@@ -1226,14 +1419,25 @@ const App = () => {
       <StatusBar
         barStyle="light-content"
         backgroundColor="#111827"
-        translucent={Platform.OS === 'android'}
+        translucent={false}
       />
-      <SafeAreaView style={styles.container}>
-        <View
-          style={[
-            styles.webviewContainer,
-            Platform.OS === 'ios' ? styles.iosWebviewContainer : null,
-          ]}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
+        <KeyboardAwareScrollView
+          style={styles.keyboardAvoidingContainer}
+          contentContainerStyle={styles.keyboardScrollContent}
+          enableOnAndroid={true}
+          enableAutomaticScroll={true}
+          extraScrollHeight={Platform.OS === 'ios' ? 20 : 5}
+          extraHeight={Platform.OS === 'ios' ? 100 : 20}
+          keyboardShouldPersistTaps="handled"
+          scrollEnabled={true}
+          resetScrollToCoords={{x: 0, y: 0}}
+        >
+          <View
+            style={[
+              styles.webviewContainer,
+              Platform.OS === 'ios' ? styles.iosWebviewContainer : null,
+            ]}>
           <WebView
             ref={webViewRef}
             source={{uri: url}}
@@ -1245,10 +1449,60 @@ const App = () => {
             onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
             onShouldStartLoadWithRequest={(request) => {
-              // Interceptar requisições para determinar se deve mostrar o loading
-              // Esta função é chamada antes de carregar qualquer URL
+              const url = request.url;
+              const lowerUrl = url.toLowerCase();
+              
+              // Verificar se é um link especial (tel:, mailto:, sms:, whatsapp://, etc.)
+              if (
+                lowerUrl.startsWith('tel:') ||
+                lowerUrl.startsWith('mailto:') ||
+                lowerUrl.startsWith('sms:') ||
+                lowerUrl.startsWith('whatsapp://') ||
+                lowerUrl.startsWith('tg://') ||
+                lowerUrl.startsWith('instagram://') ||
+                lowerUrl.startsWith('fb://')
+              ) {
+                // Abrir no app apropriado
+                handleExternalLink(url);
+                return false; // Não carregar no WebView
+              }
+              
+              // Verificar se é um link do WhatsApp, Telegram, Instagram, Facebook
+              if (
+                lowerUrl.includes('wa.me') ||
+                lowerUrl.includes('api.whatsapp.com') ||
+                lowerUrl.includes('whatsapp.com') ||
+                lowerUrl.includes('t.me') ||
+                lowerUrl.includes('telegram.me') ||
+                lowerUrl.includes('instagram.com') ||
+                lowerUrl.includes('facebook.com') ||
+                lowerUrl.includes('fb.com')
+              ) {
+                // Abrir no app apropriado ou navegador externo
+                handleExternalLink(url);
+                return false; // Não carregar no WebView
+              }
+              
+              // Verificar se é um serviço externo permitido no WebView (Stripe, Google, etc.)
+              // Esses recursos carregam automaticamente (iframes) e não devem abrir no navegador
+              if (isWebViewAllowedService(url)) {
+                console.log('Serviço externo permitido no WebView:', extractDomain(url));
+                return true; // Permitir carregar no WebView
+              }
+              
+              // Verificar se é um link externo (não é do Interflow)
+              if (
+                (lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')) &&
+                !isInterflowDomain(url)
+              ) {
+                // Abrir no navegador externo
+                handleExternalLink(url);
+                return false; // Não carregar no WebView
+              }
+              
+              // É um link interno do Interflow
               if (Platform.OS === 'android') {
-                const requestDomain = extractDomain(request.url);
+                const requestDomain = extractDomain(url);
                 const baseDomain = extractDomain(BASE_URL);
                 
                 // Se for do mesmo domínio, provavelmente é navegação interna
@@ -1257,7 +1511,8 @@ const App = () => {
                   setLoading(false);
                 }
               }
-              // Sempre permitir a carga da URL
+              
+              // Permitir a carga da URL interna
               return true;
             }}
             onLoadProgress={({nativeEvent}) => {
@@ -1276,7 +1531,7 @@ const App = () => {
             domStorageEnabled={true}
             startInLoadingState={true}
             allowsBackForwardNavigationGestures={!isInChatPage}
-            pullToRefreshEnabled={true}
+            pullToRefreshEnabled={false}
             cacheEnabled={true}
             cacheMode="LOAD_DEFAULT"
             incognito={false}
@@ -1284,12 +1539,12 @@ const App = () => {
             sharedCookiesEnabled={true}
             allowsLinkPreview={false}
             bounces={true}
-            scrollEnabled={Platform.OS === 'ios' ? true : false}
+            scrollEnabled={true}
             overScrollMode="never"
             showsVerticalScrollIndicator={false}
             showsHorizontalScrollIndicator={false}
             contentInset={{top: 0, left: 0, bottom: 0, right: 0}}
-            automaticallyAdjustContentInsets={Platform.OS === 'ios' ? true : false}
+            automaticallyAdjustContentInsets={true}
             mediaPlaybackRequiresUserAction={false}
             keyboardDisplayRequiresUserAction={false}
             allowsProtectedMedia={true}
@@ -1435,7 +1690,8 @@ const App = () => {
               </View>
             )}
           />
-        </View>
+          </View>
+        </KeyboardAwareScrollView>
         {loading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color="#ffffff" />
@@ -1480,14 +1736,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#111827',
-    // Remover margem negativa que estava causando o corte na parte inferior do Android
-    marginBottom: Platform.OS === 'android' ? 0 : -20,
-    marginTop: Platform.OS === 'android' ? 0 : -5,
-    paddingTop: Platform.OS === 'android' ? 20 : 0,
+    // paddingBottom: Platform.OS === 'ios' ? 0 : 0,
+    marginBottom: Platform.OS === 'ios' ? -20 : -7,
+    marginTop: Platform.OS === 'ios' ? -5 : 0,
+  },
+  keyboardAvoidingContainer: {
+    flex: 1,
+  },
+  keyboardScrollContent: {
+    flexGrow: 1,
   },
   webviewContainer: {
     flex: 1,
-    marginVertical: 2,
     backgroundColor: '#111827',
   },
   iosWebviewContainer: {

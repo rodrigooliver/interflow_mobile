@@ -1355,7 +1355,7 @@ PODS:
     - Yoga
   - react-native-splash-screen (3.3.0):
     - React-Core
-  - react-native-webview (13.13.5):
+  - react-native-webview (13.16.0):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -1983,7 +1983,7 @@ SPEC CHECKSUMS:
   react-native-onesignal: 33ade92bd91578374c31c5a5a91f45f49c2d6614
   react-native-safe-area-context: 0f14bce545abcdfbff79ce2e3c78c109f0be283e
   react-native-splash-screen: 95994222cc95c236bd3cdc59fe45ed5f27969594
-  react-native-webview: 5095dd03fc98a529e44a6bb81aed21062b5f879e
+  react-native-webview: b729d1bcf8fbd141237355dcfd6bb65b9a1d3b1a
   React-NativeModulesApple: 88433b6946778bea9c153e27b671de15411bf225
   React-perflogger: 9e8d3c0dc0194eb932162812a168aa5dc662f418
   React-performancetimeline: 5a2d6efef52bdcefac079c7baa30934978acd023

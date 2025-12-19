@@ -11,7 +11,7 @@ const ENV = {
   ONESIGNAL_APP_ID: '',
 
   // Base URL Configuration
-  BASE_URL: 'https://interflow.chat/app',
+  BASE_URL: 'https://app.interflow.chat/app',
 };
 
 export default ENV; 

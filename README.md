@@ -41,7 +41,7 @@ SENTRY_ALLOW_FAILURE=true
 ONESIGNAL_APP_ID=your_onesignal_app_id
 
 # Base URL Configuration
-BASE_URL=https://interflow.chat/app
+BASE_URL=https://app.interflow.chat/app
 ```
 
 ## Instalação
