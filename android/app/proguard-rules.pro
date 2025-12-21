@@ -45,6 +45,30 @@
 -keep class com.facebook.jni.** { *; }
 
 # ============================================
+# React Native DevSupport (necessário mesmo em release para evitar ClassNotFoundException)
+# ============================================
+-keep class com.facebook.react.devsupport.** { *; }
+-keep class com.facebook.react.packagerconnection.** { *; }
+-keep class com.facebook.react.inspector.** { *; }
+
+# ============================================
+# React Native SoLoader (necessário para carregar bibliotecas nativas)
+# ============================================
+-keep class com.facebook.soloader.** { *; }
+-keep class com.facebook.react.soloader.** { *; }
+
+# ============================================
+# React Native Runtime (necessário para nova arquitetura)
+# ============================================
+-keep class com.facebook.react.runtime.** { *; }
+-keep class com.facebook.react.bridge.** { *; }
+-keep class com.facebook.react.uimanager.** { *; }
+-keep class com.facebook.react.modules.** { *; }
+-keep class com.facebook.react.views.** { *; }
+-keep class com.facebook.react.common.** { *; }
+-keep class com.facebook.react.turbomodule.** { *; }
+
+# ============================================
 # OkHttp / Okio
 # ============================================
 -dontwarn okhttp3.**
