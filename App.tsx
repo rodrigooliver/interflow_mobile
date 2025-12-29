@@ -20,6 +20,7 @@ import {
   TouchableOpacity,
   PermissionsAndroid,
   Linking,
+  Image,
   type Permission,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -34,6 +35,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import env from './src/config/env';
+import SplashLogo from './src/assets/splash_logo.png';
 
 Sentry.init({
   dsn: env.SENTRY_DSN,
@@ -62,6 +64,9 @@ const BASE_URL = env.BASE_URL;
 
 // Chave para armazenamento da URL pendente
 const PENDING_URL_KEY = 'INTERFLOW_PENDING_URL';
+
+// Cor de fundo da splash screen - usada para evitar flash branco
+const SPLASH_BACKGROUND_COLOR = '#1E2B3D';
 
 // Função auxiliar para extrair o domínio de uma URL de forma segura
 const extractDomain = (url: string): string => {
@@ -108,6 +113,7 @@ const ALLOWED_DOMAINS = [
   'interflow.chat',
   'app.interflow.chat',
   'www.interflow.chat',
+  'interflow.interdev.work', // Domínio de desenvolvimento
   extractDomain(BASE_URL), // Adiciona o domínio do BASE_URL configurado
 ].filter(Boolean);
 
@@ -327,6 +333,51 @@ const App = () => {
     message: string;
   } | null>(null);
   const [isInChatPage, setIsInChatPage] = useState(false);
+  const [appTheme, setAppTheme] = useState<'light' | 'dark'>('dark');
+  const [themeLoaded, setThemeLoaded] = useState(false);
+
+  // Carregar tema salvo do AsyncStorage ao iniciar
+  useEffect(() => {
+    const loadSavedTheme = async () => {
+      try {
+        const savedTheme = await AsyncStorage.getItem('APP_THEME');
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+          setAppTheme(savedTheme);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar tema:', error);
+      } finally {
+        setThemeLoaded(true);
+      }
+    };
+    loadSavedTheme();
+  }, []);
+
+  // Salvar tema no AsyncStorage quando mudar
+  useEffect(() => {
+    const saveTheme = async () => {
+      try {
+        await AsyncStorage.setItem('APP_THEME', appTheme);
+      } catch (error) {
+        console.error('Erro ao salvar tema:', error);
+      }
+    };
+    
+    // Só salvar após o tema ter sido carregado inicialmente
+    if (themeLoaded) {
+      saveTheme();
+    }
+  }, [appTheme, themeLoaded]);
+
+  // Cores dinâmicas baseadas no tema
+  const themeColors = {
+    background: appTheme === 'dark' ? '#111827' : '#FFFFFF',
+    backgroundSecondary: appTheme === 'dark' ? '#1F2937' : '#F3F4F6',
+    text: appTheme === 'dark' ? '#FFFFFF' : '#111827',
+    textSecondary: appTheme === 'dark' ? '#9CA3AF' : '#6B7280',
+    statusBar: appTheme === 'dark' ? '#111827' : '#FFFFFF',
+    statusBarStyle: appTheme === 'dark' ? 'light-content' : 'dark-content' as 'light-content' | 'dark-content',
+  };
 
   // Limpar recursos quando o componente for desmontado
   useEffect(() => {
@@ -383,21 +434,8 @@ const App = () => {
       handleAppStateChange,
     );
 
-    setTimeout(() => {
-      try {
-        if (SplashScreen.hide) {
-          SplashScreen.hide();
-        }
-      } catch (error) {
-        console.error('Erro ao esconder splash screen:', error);
-        Sentry.captureException(error, {
-          tags: {
-            location: 'SplashScreen',
-            type: 'HIDE',
-          },
-        });
-      }
-    }, 1000);
+    // Splash screen será escondida apenas quando o WebView terminar de carregar
+    // Isso mantém a experiência visual consistente com o logo da Interflow
 
     backHandlerSubscription.current = BackHandler.addEventListener(
       'hardwareBackPress',
@@ -873,6 +911,11 @@ const App = () => {
         console.log('Botão voltar do chat simulado com sucesso');
         // Opcional: Executar alguma ação adicional se necessário
       }
+      // Verificar se é uma mudança de tema
+      else if (data.type === 'themeChange' && data.theme) {
+        const newTheme = data.theme === 'light' ? 'light' : 'dark';
+        setAppTheme(newTheme);
+      }
     } catch (error) {
       console.error('Erro ao processar mensagem do WebView:', error);
       Sentry.captureException(error, {
@@ -1015,6 +1058,15 @@ const App = () => {
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
 
+      // Esconder a splash screen nativa agora que o WebView está pronto
+      try {
+        if (SplashScreen.hide) {
+          SplashScreen.hide();
+        }
+      } catch (splashError) {
+        console.error('Erro ao esconder splash screen:', splashError);
+      }
+
       // Verificar se há uma notificação que abriu o app
       if (lastNotificationRef.current) {
         console.log(
@@ -1038,6 +1090,15 @@ const App = () => {
       setLoading(false);
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
+      
+      // Esconder splash mesmo em caso de erro
+      try {
+        if (SplashScreen.hide) {
+          SplashScreen.hide();
+        }
+      } catch (splashError) {
+        console.error('Erro ao esconder splash screen:', splashError);
+      }
     }
   };
 
@@ -1155,17 +1216,67 @@ const App = () => {
 
         // Adicionar classe CSS ao body para estilização específica
         document.body.classList.add('native-app');
-        document.body.classList.add('dark');
         document.body.classList.add('platform-${Platform.OS}');
+        
+        // Sincronizar tema inicial com o localStorage ou preferência do sistema
+        const savedTheme = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+        
+        document.documentElement.classList.remove('light', 'dark');
+        document.documentElement.classList.add(initialTheme);
+        
+        // Enviar tema inicial para o app nativo IMEDIATAMENTE
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'themeChange',
+            theme: initialTheme
+          }));
+        }
+        
+        // Observer para detectar mudanças de tema e notificar o app nativo
+        const themeObserver = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            if (mutation.attributeName === 'class') {
+              const html = document.documentElement;
+              const isDark = html.classList.contains('dark');
+              const currentTheme = isDark ? 'dark' : 'light';
+              
+              // Notificar o app nativo sobre a mudança de tema
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'themeChange',
+                  theme: currentTheme
+                }));
+              }
+            }
+          });
+        });
+        
+        // Observar mudanças nas classes do elemento html
+        themeObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ['class']
+        });
 
         // Remover elementos desnecessários para uma experiência mais nativa
         const style = document.createElement('style');
         style.innerHTML = \`
-          body {
+          html, body {
             -webkit-tap-highlight-color: transparent;
             touch-action: manipulation;
             user-select: none;
-            padding: 2px 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          
+          /* Cores de fundo dinâmicas baseadas no tema */
+          html.dark, html.dark body {
+            background-color: #111827 !important;
+          }
+          
+          html.light, html.light body {
+            background-color: #FFFFFF !important;
           }
           
           ::-webkit-scrollbar {
@@ -1184,11 +1295,11 @@ const App = () => {
           }
 
           .fixed-header, .sticky-top, header, nav {
-            top: 2px !important;
+            top: 0 !important;
           }
 
           .fixed-footer, footer {
-            bottom: 2px !important;
+            bottom: 0 !important;
           }
 
           /* Estilos específicos para o app nativo */
@@ -1219,7 +1330,23 @@ const App = () => {
         // Adicionar evento para detectar quando o DOM estiver pronto
         document.addEventListener('DOMContentLoaded', function() {
           try {
-            document.body.style.margin = '2px 0';
+            // Garantir que não haja margem/padding causando bordas visíveis
+            document.body.style.margin = '0';
+            document.body.style.padding = '0';
+            
+            // Reenviar tema para o app nativo após DOM estar pronto
+            // Isso garante que o tema correto seja aplicado mesmo após o React carregar
+            setTimeout(function() {
+              const html = document.documentElement;
+              const isDark = html.classList.contains('dark');
+              const currentTheme = isDark ? 'dark' : 'light';
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'themeChange',
+                  theme: currentTheme
+                }));
+              }
+            }, 100);
             
             // Configurações específicas para Android
             if ('${Platform.OS}' === 'android') {
@@ -1291,6 +1418,25 @@ const App = () => {
             });
             window.dispatchEvent(nativeAppReadyEvent);
             document.dispatchEvent(nativeAppReadyEvent);
+            
+            // Garantir que o tema seja sincronizado após o app estar pronto
+            const syncThemeToNative = function() {
+              const html = document.documentElement;
+              const isDark = html.classList.contains('dark');
+              const theme = isDark ? 'dark' : 'light';
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'themeChange',
+                  theme: theme
+                }));
+              }
+            };
+            
+            // Sincronizar tema agora e também após o React hidratar
+            syncThemeToNative();
+            setTimeout(syncThemeToNative, 500);
+            setTimeout(syncThemeToNative, 1000);
+            setTimeout(syncThemeToNative, 2000);
             
             // Corrigir o comportamento dos links para evitar o problema de carregamento infinito no Android
             if ('${Platform.OS}' === 'android') {
@@ -1414,35 +1560,44 @@ const App = () => {
     })();
   `;
 
+  // Usar cor da splash durante o loading para evitar flash
+  // MAS sempre respeitar o tema atual para o StatusBar (evitar texto branco em fundo branco)
+  const currentBackground = loading ? SPLASH_BACKGROUND_COLOR : themeColors.background;
+  // StatusBar SEMPRE segue o tema atual, independente do loading
+  const currentStatusBarStyle = themeColors.statusBarStyle;
+
   return (
     <SafeAreaProvider>
       <StatusBar
-        barStyle="light-content"
-        backgroundColor="#111827"
+        barStyle={currentStatusBarStyle}
+        backgroundColor={currentBackground}
         translucent={false}
       />
-      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
+      <SafeAreaView style={[styles.container, {backgroundColor: currentBackground}]} edges={['top', 'bottom', 'left', 'right']}>
         <KeyboardAwareScrollView
           style={styles.keyboardAvoidingContainer}
           contentContainerStyle={styles.keyboardScrollContent}
           enableOnAndroid={true}
-          enableAutomaticScroll={true}
+          enableAutomaticScroll={false}
           extraScrollHeight={Platform.OS === 'ios' ? 20 : 5}
           extraHeight={Platform.OS === 'ios' ? 100 : 20}
           keyboardShouldPersistTaps="handled"
-          scrollEnabled={true}
+          scrollEnabled={false}
           resetScrollToCoords={{x: 0, y: 0}}
         >
           <View
             style={[
               styles.webviewContainer,
+              {backgroundColor: currentBackground},
               Platform.OS === 'ios' ? styles.iosWebviewContainer : null,
-            ]}>
+            ]}
+            >
           <WebView
             ref={webViewRef}
             source={{uri: url}}
             style={[
               styles.webview,
+              {backgroundColor: themeColors.background},
               !isWebViewVisible && styles.webviewHidden
             ]}
             onNavigationStateChange={onNavigationStateChange}
@@ -1685,30 +1840,38 @@ const App = () => {
               setLoading(true);
             }}
             renderLoading={() => (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#ffffff" />
+              <View style={styles.splashOverlay}>
+                <Image
+                  source={SplashLogo}
+                  style={styles.splashLogo}
+                  resizeMode="contain"
+                />
               </View>
             )}
           />
           </View>
         </KeyboardAwareScrollView>
         {loading && (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color="#ffffff" />
+          <View style={styles.splashOverlay}>
+            <Image
+              source={SplashLogo}
+              style={styles.splashLogo}
+              resizeMode="contain"
+            />
           </View>
         )}
         {error && (
-          <View style={styles.errorContainer}>
-            <View style={styles.errorContent}>
+          <View style={[styles.errorContainer, {backgroundColor: themeColors.background}]}>
+            <View style={[styles.errorContent, {backgroundColor: themeColors.backgroundSecondary}]}>
               <ActivityIndicator 
                 size="large" 
                 color="#3B82F6" 
                 style={styles.errorIcon}
               />
-              <Text style={styles.errorTitle}>
+              <Text style={[styles.errorTitle, {color: themeColors.text}]}>
                 {error.type === 'offline' ? 'Sem Conexão' : 'Erro ao Carregar'}
               </Text>
-              <Text style={styles.errorMessage}>
+              <Text style={[styles.errorMessage, {color: themeColors.textSecondary}]}>
                 {error.message}
               </Text>
               <TouchableOpacity 
@@ -1735,27 +1898,28 @@ const App = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#111827',
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
     // paddingBottom: Platform.OS === 'ios' ? 0 : 0,
     marginBottom: Platform.OS === 'ios' ? -20 : -7,
     marginTop: Platform.OS === 'ios' ? -5 : 0,
   },
   keyboardAvoidingContainer: {
     flex: 1,
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
   },
   keyboardScrollContent: {
     flexGrow: 1,
   },
   webviewContainer: {
     flex: 1,
-    backgroundColor: '#111827',
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
   },
   iosWebviewContainer: {
     paddingBottom: 1,
   },
   webview: {
     flex: 1,
-    marginTop: 0,
+    // marginTop: 0,
     marginBottom: Platform.OS === 'android' ? 0 : -2,
     height: '100%',
     width: '100%',
@@ -1772,7 +1936,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
   },
   loadingOverlay: {
     position: 'absolute',
@@ -1782,7 +1946,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
+  },
+  splashOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1E2B3D',
+  },
+  splashLogo: {
+    width: 140,
+    height: 140,
   },
   loadingText: {
     marginTop: 10,
@@ -1802,7 +1980,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: SPLASH_BACKGROUND_COLOR,
     padding: 20,
   },
   errorContent: {

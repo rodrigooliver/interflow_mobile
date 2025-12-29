@@ -5,24 +5,12 @@
     android:background="@color/splash_background"
     android:orientation="vertical">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+    <ImageView
+        android:id="@+id/splash_logo"
+        android:layout_width="140dp"
+        android:layout_height="140dp"
         android:layout_centerInParent="true"
-        android:text="Interflow"
-        android:textColor="#FFFFFF"
-        android:textSize="32sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true"
-        android:layout_centerHorizontal="true"
-        android:layout_marginBottom="24dp"
-        android:text="Carregando..."
-        android:textColor="#CCCCCC"
-        android:textSize="18sp"
-        android:textStyle="normal" />
+        android:src="@drawable/splash_logo"
+        android:contentDescription="Interflow Logo" />
 
 </RelativeLayout> 

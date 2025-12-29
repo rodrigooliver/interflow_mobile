@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary_dark">#000000</color>
-    <color name="status_bar_color">#FFFFFF</color>
-    <color name="splash_background">#FFFFFF</color>
+    <color name="primary_dark">#1E2B3D</color>
+    <color name="status_bar_color">#1E2B3D</color>
+    <color name="splash_background">#1E2B3D</color>
 </resources> 

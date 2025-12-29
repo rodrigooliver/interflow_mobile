@@ -13,7 +13,16 @@ class AppDelegate: RCTAppDelegate {
     // They will be passed down to the ViewController used by React Native.
     self.initialProps = [:]
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    
+    // Definir cor de fundo para evitar flash branco entre splash e React Native
+    // Cor #1E2B3D em RGB
+    if let rootView = self.window.rootViewController?.view {
+      rootView.backgroundColor = UIColor(red: 30/255, green: 43/255, blue: 61/255, alpha: 1.0)
+    }
+    self.window.backgroundColor = UIColor(red: 30/255, green: 43/255, blue: 61/255, alpha: 1.0)
+    
+    return result
   }
 
   override func sourceURL(for bridge: RCTBridge) -> URL? {
