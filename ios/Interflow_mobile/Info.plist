@@ -35,6 +35,10 @@
 	<string>O Interflow necessita acesso à sua localização para otimizar o atendimento ao cliente e permitir que nossos agentes possam fornecer suporte mais contextualizado quando você estiver usando o aplicativo.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>O Interflow necessita acesso à sua câmera para permitir que você capture fotos e envie imagens durante suas conversas com os agentes de atendimento.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>O Interflow precisa de permissão para salvar imagens das conversas na sua galeria.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>O Interflow precisa de acesso à galeria para escolher, enviar, salvar e compartilhar imagens nas conversas.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>O Interflow necessita acesso ao seu microfone para permitir mensagens de áudio e chamadas de voz durante suas conversas com os agentes de atendimento.</string>
 	<key>NSUserNotificationsUsageDescription</key>

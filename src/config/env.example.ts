@@ -1,17 +1,17 @@
-// Arquivo de configuração de ambiente
+export type ChatUIMode = 'hybrid' | 'webview';
 
-// Importa as variáveis de ambiente do arquivo .env
 const ENV = {
-  // Sentry Configuration
   SENTRY_DSN: '',
-  SENTRY_DISABLE_AUTO_UPLOAD: true,
-  SENTRY_ALLOW_FAILURE: true,
-
-  // OneSignal Configuration
   ONESIGNAL_APP_ID: '',
-
-  // Base URL Configuration
   BASE_URL: 'https://app.interflow.chat/app',
+  WEB_APP_URL: 'https://app.interflow.chat/app',
+  SUPABASE_URL: '',
+  SUPABASE_ANON_KEY: '',
+  API_BASE_URL: 'https://node.interflow.chat/api',
+  IS_DEV: false,
+  CHAT_UI_MODE: 'webview' as ChatUIMode,
 };
 
-export default ENV; 
+export const CHAT_UI_MODE_STORAGE_KEY = 'INTERFLOW_CHAT_UI_MODE';
+
+export default ENV;

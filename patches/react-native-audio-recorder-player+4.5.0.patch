@@ -1,0 +1,400 @@
+diff --git a/node_modules/react-native-audio-recorder-player/ios/AudioRecorderPlayer.swift b/node_modules/react-native-audio-recorder-player/ios/AudioRecorderPlayer.swift
+index 08b4c20..366565e 100644
+--- a/node_modules/react-native-audio-recorder-player/ios/AudioRecorderPlayer.swift
++++ b/node_modules/react-native-audio-recorder-player/ios/AudioRecorderPlayer.swift
+@@ -45,7 +45,7 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                                                      options: [.defaultToSpeaker, .allowBluetooth])
+                 try self.recordingSession?.setActive(true)
+                 
+-                print("🎙️ Audio session set up successfully")
++                // print("🎙️ Audio session set up successfully")
+                 
+                 // Request permission if needed
+                 self.recordingSession?.requestRecordPermission { [weak self] allowed in
+@@ -61,7 +61,7 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                     }
+                 }
+             } catch {
+-                print("🎙️ Audio session setup failed: \(error)")
++                // print("🎙️ Audio session setup failed: \(error)")
+                 promise.reject(withError: RuntimeError.error(withMessage: "Audio session setup failed: \(error.localizedDescription)"))
+             }
+         }
+@@ -71,50 +71,50 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+     
+     private func setupAndStartRecording(uri: String?, audioSets: AudioSet?, meteringEnabled: Bool?, promise: Promise<String>) {
+         do {
+-            print("🎙️ Setting up recording...")
++            // print("🎙️ Setting up recording...")
+             
+             // Setup recording URL
+             let fileURL: URL
+             if let uri = uri {
+                 fileURL = URL(fileURLWithPath: uri)
+-                print("🎙️ Using provided URI: \(uri)")
++                // print("🎙️ Using provided URI: \(uri)")
+             } else {
+                 let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                 let fileName = "sound_\(Date().timeIntervalSince1970).m4a"
+                 fileURL = documentsPath.appendingPathComponent(fileName)
+-                print("🎙️ Generated file path: \(fileURL.path)")
++                // print("🎙️ Generated file path: \(fileURL.path)")
+             }
+             
+             // Check if directory exists and is writable
+             let directory = fileURL.deletingLastPathComponent()
+             if !FileManager.default.fileExists(atPath: directory.path) {
+-                print("🎙️ Directory doesn't exist: \(directory.path)")
++                // print("🎙️ Directory doesn't exist: \(directory.path)")
+                 throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Directory doesn't exist"])
+             }
+             
+             if !FileManager.default.isWritableFile(atPath: directory.path) {
+-                print("🎙️ Directory is not writable: \(directory.path)")
++                // print("🎙️ Directory is not writable: \(directory.path)")
+                 throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Directory is not writable"])
+             }
+             
+-            print("🎙️ Recording to: \(fileURL.path)")
+-            print("🎙️ Directory exists and is writable: \(directory.path)")
++            // print("🎙️ Recording to: \(fileURL.path)")
++            // print("🎙️ Directory exists and is writable: \(directory.path)")
+             
+             // Setup audio settings
+             let settings = self.getAudioSettings(audioSets: audioSets)
+-            print("🎙️ Audio settings: \(settings)")
++            // print("🎙️ Audio settings: \(settings)")
+             
+             // Create recorder
+-            print("🎙️ Creating AVAudioRecorder...")
++            // print("🎙️ Creating AVAudioRecorder...")
+             self.audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
+-            print("🎙️ AVAudioRecorder created successfully")
++            // print("🎙️ AVAudioRecorder created successfully")
+             
+             self.audioRecorder?.isMeteringEnabled = meteringEnabled ?? false
+-            print("🎙️ Metering enabled: \(meteringEnabled ?? false)")
++            // print("🎙️ Metering enabled: \(meteringEnabled ?? false)")
+             
+-            print("🎙️ Preparing to record...")
++            // print("🎙️ Preparing to record...")
+             let prepared = self.audioRecorder?.prepareToRecord() ?? false
+-            print("🎙️ Recorder prepared: \(prepared)")
++            // print("🎙️ Recorder prepared: \(prepared)")
+             
+             if !prepared {
+                 throw NSError(domain: "AudioRecorder", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare recorder"])
+@@ -122,21 +122,21 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+             
+             // Start recording on main queue
+             DispatchQueue.main.async {
+-                print("🎙️ Starting recording...")
++                // print("🎙️ Starting recording...")
+                 
+                 // Ensure audio session is active before recording
+                 do {
+                     // Try to activate the session with notification to other apps
+                     try self.recordingSession?.setActive(true, options: .notifyOthersOnDeactivation)
+-                    print("🎙️ Audio session activated with notification")
++                    // print("🎙️ Audio session activated with notification")
+                 } catch {
+-                    print("🎙️ Warning: Could not activate session with notification: \(error)")
++                    // print("🎙️ Warning: Could not activate session with notification: \(error)")
+                     // Try without notification option as fallback, but fail explicitly if it also errors
+                     do {
+                         try self.recordingSession?.setActive(true)
+-                        print("🎙️ Audio session activated without notification (fallback)")
++                        // print("🎙️ Audio session activated without notification (fallback)")
+                     } catch let fallbackError {
+-                        print("🎙️ Error: Fallback audio session activation failed: \(fallbackError)")
++                        // print("🎙️ Error: Fallback audio session activation failed: \(fallbackError)")
+                         promise.reject(withError: RuntimeError.error(withMessage: "Failed to activate audio session: \(fallbackError.localizedDescription)"))
+                         return
+                     }
+@@ -147,9 +147,9 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                     // Check if audio session is still active
+                     let audioSession = AVAudioSession.sharedInstance()
+                     if !audioSession.isOtherAudioPlaying {
+-                        print("🎙️ No other audio playing, proceeding with recording")
++                        // print("🎙️ No other audio playing, proceeding with recording")
+                     } else {
+-                        print("🎙️ Warning: Other audio is playing")
++                        // print("🎙️ Warning: Other audio is playing")
+                     }
+                     
+                     // Try to record with retry mechanism
+@@ -158,17 +158,17 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                     
+                     func attemptRecording() {
+                         recordAttempts += 1
+-                        print("🎙️ Recording attempt \(recordAttempts)/\(maxAttempts)")
++                        // print("🎙️ Recording attempt \(recordAttempts)/\(maxAttempts)")
+                         
+                         func configureAndStartRecording() {
+                             let started = self.audioRecorder?.record() ?? false
+-                            print("🎙️ Recording started: \(started)")
++                            // print("🎙️ Recording started: \(started)")
+                             
+                             if started {
+                                 self.startRecordTimer()
+                                 promise.resolve(withResult: fileURL.absoluteString)
+                             } else if recordAttempts < maxAttempts {
+-                                print("🎙️ Recording attempt \(recordAttempts) failed, retrying in 0.3s...")
++                                // print("🎙️ Recording attempt \(recordAttempts) failed, retrying in 0.3s...")
+                                 
+                                 // Try to fully reset audio session before retry
+                                 do {
+@@ -180,9 +180,9 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                                                                mode: sessionMode,
+                                                                options: [.defaultToSpeaker, .allowBluetooth])
+                                     try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+-                                    print("🎙️ Audio session fully reset for retry")
++                                    // print("🎙️ Audio session fully reset for retry")
+                                 } catch {
+-                                    print("🎙️ Warning: Could not reset session: \(error)")
++                                    // print("🎙️ Warning: Could not reset session: \(error)")
+                                 }
+                                 
+                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+@@ -195,10 +195,10 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                                 let sessionMode = audioSession.mode
+                                 let otherAudioPlaying = audioSession.isOtherAudioPlaying
+                                 
+-                                print("🎙️ All recording attempts failed")
+-                                print("🎙️ Recorder state - isRecording: \(isRecording)")
+-                                print("🎙️ Audio session - category: \(sessionCategory), mode: \(sessionMode)")
+-                                print("🎙️ Audio session - other audio playing: \(otherAudioPlaying)")
++                                // print("🎙️ All recording attempts failed")
++                                // print("🎙️ Recorder state - isRecording: \(isRecording)")
++                                // print("🎙️ Audio session - category: \(sessionCategory), mode: \(sessionMode)")
++                                // print("🎙️ Audio session - other audio playing: \(otherAudioPlaying)")
+                                 
+                                 var errorMessage = "Failed to start recording after \(maxAttempts) attempts."
+                                 if sessionCategory != .playAndRecord {
+@@ -221,16 +221,16 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                             // Check if we need to reconfigure
+                             if currentCategory != .playAndRecord || recordAttempts > 1 {
+                                 if currentCategory != .playAndRecord {
+-                                    print("🎙️ ⚠️ Audio session category was changed to: \(currentCategory)")
+-                                    print("🎙️ ⚠️ Audio session mode was changed to: \(currentMode)")
++                                    // print("🎙️ ⚠️ Audio session category was changed to: \(currentCategory)")
++                                    // print("🎙️ ⚠️ Audio session mode was changed to: \(currentMode)")
+                                 }
+-                                print("🎙️ Forcing correct category and mode for recording (attempt \(recordAttempts))...")
++                                // print("🎙️ Forcing correct category and mode for recording (attempt \(recordAttempts))...")
+                                 
+                                 // Step 1: Deactivate current session
+                                 do {
+                                     try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+                                 } catch {
+-                                    print("🎙️ Warning: Could not deactivate session: \(error)")
++                                    // print("🎙️ Warning: Could not deactivate session: \(error)")
+                                 }
+                                 
+                                 // Step 2: Configure with mixing after delay
+@@ -242,7 +242,7 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                                                                    options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+                                         try audioSession.setActive(true, options: [])
+                                     } catch {
+-                                        print("🎙️ Warning: Could not set mixing category: \(error)")
++                                        // print("🎙️ Warning: Could not set mixing category: \(error)")
+                                     }
+                                     
+                                     // Step 3: Configure exclusive access after another delay
+@@ -253,18 +253,18 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+                                                                        mode: sessionMode,
+                                                                        options: [.defaultToSpeaker, .allowBluetooth])
+                                             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+-                                            print("🎙️ Audio session corrected and exclusively activated")
++                                            // print("🎙️ Audio session corrected and exclusively activated")
+                                         } catch let error as NSError {
+-                                            print("🎙️ Error setting exclusive category: \(error)")
++                                            // print("🎙️ Error setting exclusive category: \(error)")
+                                             
+                                             // Handle OSStatus -50 error
+                                             if error.code == -50 {
+-                                                print("🎙️ Attempting simple activation due to param error...")
++                                                // print("🎙️ Attempting simple activation due to param error...")
+                                                 do {
+                                                     try audioSession.setCategory(.playAndRecord)
+                                                     try audioSession.setActive(true)
+                                                 } catch {
+-                                                    print("🎙️ Simple activation also failed: \(error)")
++                                                    // print("🎙️ Simple activation also failed: \(error)")
+                                                 }
+                                             }
+                                         }
+@@ -292,12 +292,12 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+             }
+             
+         } catch {
+-            print("🎙️ Recording setup failed: \(error)")
+-            print("🎙️ Error details: \(error)")
++            // print("🎙️ Recording setup failed: \(error)")
++            // print("🎙️ Error details: \(error)")
+             if let nsError = error as NSError? {
+-                print("🎙️ Error domain: \(nsError.domain)")
+-                print("🎙️ Error code: \(nsError.code)")
+-                print("🎙️ Error userInfo: \(nsError.userInfo)")
++                // print("🎙️ Error domain: \(nsError.domain)")
++                // print("🎙️ Error code: \(nsError.code)")
++                // print("🎙️ Error userInfo: \(nsError.userInfo)")
+             }
+             promise.reject(withError: RuntimeError.error(withMessage: "Recording setup failed: \(error.localizedDescription)"))
+         }
+@@ -742,21 +742,21 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+     // MARK: - Timer Management
+     
+     private func startRecordTimer() {
+-        print("🎙️ Starting record timer with interval: \(self.subscriptionDuration)")
++        // print("🎙️ Starting record timer with interval: \(self.subscriptionDuration)")
+         self.recordTimer = Timer.scheduledTimer(withTimeInterval: self.subscriptionDuration, repeats: true) { [weak self] _ in
+             guard let self = self else { 
+-                print("🎙️ Timer callback: self is nil")
++                // print("🎙️ Timer callback: self is nil")
+                 return 
+             }
+             guard let recorder = self.audioRecorder else { 
+-                print("🎙️ Timer callback: audioRecorder is nil")
++                // print("🎙️ Timer callback: audioRecorder is nil")
+                 return 
+             }
+             
+-            print("🎙️ Timer callback: recorder exists, isRecording=\(recorder.isRecording)")
++            // print("🎙️ Timer callback: recorder exists, isRecording=\(recorder.isRecording)")
+             
+             if !recorder.isRecording {
+-                print("🎙️ Timer callback: recorder is not recording anymore, stopping timer")
++                // print("🎙️ Timer callback: recorder is not recording anymore, stopping timer")
+                 self.stopRecordTimer()
+                 return
+             }
+@@ -764,27 +764,29 @@ class HybridAudioRecorderPlayer: HybridAudioRecorderPlayerSpec {
+             recorder.updateMeters()
+             
+             let currentTime = recorder.currentTime * 1000 // Convert to ms
+-            let currentMetering = recorder.averagePower(forChannel: 0)
++            let currentMetering = Double(recorder.averagePower(forChannel: 0))
+             
+-            print("🎙️ Timer callback: currentTime=\(currentTime)ms, metering=\(currentMetering)")
++            // Nitro optional bridge may drop currentMetering in JS.
++            // Encode metering into sub-ms fraction: floor(ms) + bits/1e6 (bits 0...999).
++            let meterBits = max(0.0, min(999.0, ((currentMetering + 160.0) / 160.0) * 999.0))
++            let packedPosition = floor(currentTime) + (meterBits / 1_000_000.0)
+             
+-            let recordBack = RecordBackType(
++            var recordBack = RecordBackType(
+                 isRecording: recorder.isRecording,
+-                currentPosition: currentTime,
+-                currentMetering: Double(currentMetering),
++                currentPosition: packedPosition,
++                currentMetering: currentMetering,
+                 recordSecs: currentTime
+             )
+-            
+-            print("🎙️ Timer callback: calling recordBackListener with data: \(recordBack)")
++            // Force optional fields via setters (more reliable on some Nitro builds)
++            recordBack.currentMetering = currentMetering
++            recordBack.recordSecs = currentTime
++            recordBack.isRecording = recorder.isRecording
+             
+             if let listener = self.recordBackListener {
+-                print("🎙️ Timer callback: recordBackListener exists, calling it")
+                 listener(recordBack)
+-            } else {
+-                print("🎙️ Timer callback: recordBackListener is nil - not set up yet")
+             }
+         }
+-        print("🎙️ Record timer created and scheduled")
++        // print("🎙️ Record timer created and scheduled")
+     }
+     
+     private func stopRecordTimer() {
+diff --git a/node_modules/react-native-audio-recorder-player/lib/module/index.js b/node_modules/react-native-audio-recorder-player/lib/module/index.js
+index 4b143b1..548465f 100644
+--- a/node_modules/react-native-audio-recorder-player/lib/module/index.js
++++ b/node_modules/react-native-audio-recorder-player/lib/module/index.js
+@@ -7,9 +7,9 @@ class AudioRecorderPlayerImpl {
+   getHybridObject() {
+     if (!this.hybridObject) {
+       try {
+-        console.log('🔧 Creating AudioRecorderPlayer HybridObject...');
++        // console.log('🔧 Creating AudioRecorderPlayer HybridObject...');
+         this.hybridObject = NitroModules.createHybridObject('AudioRecorderPlayer');
+-        console.log('🔧 HybridObject created successfully:', !!this.hybridObject);
++        // console.log('🔧 HybridObject created successfully:', !!this.hybridObject);
+       } catch (error) {
+         console.error('🔧 Failed to create HybridObject:', error);
+         throw new Error(`Failed to create AudioRecorderPlayer HybridObject: ${error}`);
+@@ -21,16 +21,16 @@ class AudioRecorderPlayerImpl {
+   // Recording methods
+   async startRecorder(uri, audioSets, meteringEnabled) {
+     try {
+-      console.log('🔧 Getting HybridObject for startRecorder...');
++      // console.log('🔧 Getting HybridObject for startRecorder...');
+       const hybridObject = this.getHybridObject();
+-      console.log('🔧 HybridObject obtained, calling startRecorder...');
+-      console.log('🔧 Parameters:', {
+-        uri,
+-        audioSets,
+-        meteringEnabled
+-      });
++      // console.log('🔧 HybridObject obtained, calling startRecorder...');
++      // console.log('🔧 Parameters:', {
++        // uri,
++        // audioSets,
++        // meteringEnabled
++      // });
+       const result = await hybridObject.startRecorder(uri, audioSets, meteringEnabled);
+-      console.log('🔧 startRecorder completed with result:', result);
++      // console.log('🔧 startRecorder completed with result:', result);
+       return result;
+     } catch (error) {
+       console.error('🔧 startRecorder failed:', error);
+diff --git a/node_modules/react-native-audio-recorder-player/src/index.tsx b/node_modules/react-native-audio-recorder-player/src/index.tsx
+index 99d1b97..79a0d48 100644
+--- a/node_modules/react-native-audio-recorder-player/src/index.tsx
++++ b/node_modules/react-native-audio-recorder-player/src/index.tsx
+@@ -15,15 +15,15 @@ class AudioRecorderPlayerImpl {
+   private getHybridObject(): AudioRecorderPlayerType {
+     if (!this.hybridObject) {
+       try {
+-        console.log('🔧 Creating AudioRecorderPlayer HybridObject...');
++        // console.log('🔧 Creating AudioRecorderPlayer HybridObject...');
+         this.hybridObject =
+           NitroModules.createHybridObject<AudioRecorderPlayerType>(
+             'AudioRecorderPlayer'
+           );
+-        console.log(
+-          '🔧 HybridObject created successfully:',
+-          !!this.hybridObject
+-        );
++        // console.log(
++          // '🔧 HybridObject created successfully:',
++          // !!this.hybridObject
++        // );
+       } catch (error) {
+         console.error('🔧 Failed to create HybridObject:', error);
+         throw new Error(
+@@ -41,17 +41,17 @@ class AudioRecorderPlayerImpl {
+     meteringEnabled?: boolean
+   ): Promise<string> {
+     try {
+-      console.log('🔧 Getting HybridObject for startRecorder...');
++      // console.log('🔧 Getting HybridObject for startRecorder...');
+       const hybridObject = this.getHybridObject();
+-      console.log('🔧 HybridObject obtained, calling startRecorder...');
+-      console.log('🔧 Parameters:', { uri, audioSets, meteringEnabled });
++      // console.log('🔧 HybridObject obtained, calling startRecorder...');
++      // console.log('🔧 Parameters:', { uri, audioSets, meteringEnabled });
+ 
+       const result = await hybridObject.startRecorder(
+         uri,
+         audioSets,
+         meteringEnabled
+       );
+-      console.log('🔧 startRecorder completed with result:', result);
++      // console.log('🔧 startRecorder completed with result:', result);
+       return result;
+     } catch (error) {
+       console.error('🔧 startRecorder failed:', error);
