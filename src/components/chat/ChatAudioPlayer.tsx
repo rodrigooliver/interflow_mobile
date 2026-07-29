@@ -241,7 +241,8 @@ export function ChatAudioPlayer({
         <Pressable
           style={[styles.track, {backgroundColor: trackColor}]}
           onLayout={e => setTrackWidth(e.nativeEvent.layout.width)}
-          onPress={e => seekTo(e.nativeEvent.locationX)}>
+          onPress={e => seekTo(e.nativeEvent.locationX)}
+          hitSlop={{top: 12, bottom: 12, left: 0, right: 0}}>
           <View
             style={[
               styles.trackFill,
@@ -270,6 +271,8 @@ export function ChatAudioPlayer({
   );
 }
 
+const PLAY_SIZE = 40;
+
 const styles = StyleSheet.create({
   root: {
     flexDirection: 'row',
@@ -277,25 +280,27 @@ const styles = StyleSheet.create({
     gap: 10,
     minWidth: 200,
     maxWidth: 260,
-    paddingVertical: 2,
   },
   playBtn: {
-    width: 40,
-    height: 40,
+    width: PLAY_SIZE,
+    height: PLAY_SIZE,
     borderRadius: radii.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   meta: {
     flex: 1,
-    gap: 4,
     minWidth: 0,
+    height: PLAY_SIZE,
+    justifyContent: 'center',
   },
   track: {
     height: 4,
     borderRadius: 2,
     overflow: 'visible',
     justifyContent: 'center',
+    // Sobretudo com horário da mensagem sobreposto: sobe um pouco do centro
+    marginBottom: 8,
   },
   trackFill: {
     height: 4,
@@ -307,9 +312,14 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
     marginLeft: -5,
+    top: -3,
   },
   time: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
     fontSize: typography.caption,
+    lineHeight: 14,
     fontVariant: ['tabular-nums'],
   },
 });

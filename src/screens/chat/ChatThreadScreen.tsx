@@ -11,11 +11,12 @@ import {
   Keyboard,
   type ListRenderItemInfo,
 } from 'react-native';
-import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {SafeAreaView} from 'react-native-safe-area-context';
+import {ChevronLeft, MoreHorizontal} from 'lucide-react-native';
 import {useTheme} from '../../contexts/ThemeContext';
 import {useI18n} from '../../contexts/I18nContext';
 import {useAuth} from '../../contexts/AuthContext';
-import {brand, spacing, typography} from '../../theme/tokens';
+import {radii, spacing, typography} from '../../theme/tokens';
 import {
   fetchChatThreadBootstrap,
   fetchMessages,
@@ -78,7 +79,6 @@ export function ChatThreadScreen({
 }: ChatThreadScreenProps) {
   const {colors: theme} = useTheme();
   const {t} = useI18n();
-  const insets = useSafeAreaInsets();
   const {currentOrganizationMember, session} = useAuth();
   const {chatsPermissions, isOwnerOrAdmin} = usePermissions();
   const orgId = currentOrganizationMember?.organization_id;
@@ -100,6 +100,7 @@ export function ChatThreadScreen({
   const [emojiTarget, setEmojiTarget] = useState<ChatMessage | null>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_LIST_PAD);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const nearBottomRef = useRef(true);
 
@@ -135,12 +136,12 @@ export function ChatThreadScreen({
     };
   }, [pinListToBottom]);
 
-  // Com teclado aberto o composer não usa safe-area — alinhar o pad da lista
-  const listComposerPad = useMemo(() => {
-    const safe =
-      keyboardHeight > 0 ? 0 : Math.max(0, insets.bottom - spacing.sm);
-    return COMPOSER_LIST_PAD + safe;
-  }, [keyboardHeight, insets.bottom]);
+  // Altura real do composer (inclui quebras de linha, barra IA, reply…)
+  const listComposerPad = composerHeight;
+
+  const handleComposerHeight = useCallback((height: number) => {
+    setComposerHeight(height);
+  }, []);
 
   const handleListScroll = useCallback(
     (e: {nativeEvent: {contentOffset: {y: number}}}) => {
@@ -477,22 +478,31 @@ export function ChatThreadScreen({
     <SafeAreaView
       style={[styles.root, {backgroundColor: theme.pageBg}]}
       edges={['top']}>
-      <View
-        style={[
-          styles.navBar,
-          {
-            backgroundColor: theme.stickyHeader,
-            borderBottomColor: theme.border,
-          },
-        ]}>
-        <TouchableOpacity onPress={onBack} style={styles.navSide} hitSlop={10}>
-          <Text style={styles.navLink}>{t.thread.back}</Text>
+      <View style={[styles.navBar, {backgroundColor: theme.pageBg}]}>
+        <TouchableOpacity
+          onPress={onBack}
+          style={[
+            styles.navCircle,
+            {backgroundColor: theme.fill, borderColor: theme.border},
+          ]}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={t.thread.back}>
+          <ChevronLeft size={22} color={theme.label} strokeWidth={2.25} />
         </TouchableOpacity>
         <Text style={[styles.navTitle, {color: theme.label}]} numberOfLines={1}>
           {threadTitle || title || t.thread.conversation}
         </Text>
-        <TouchableOpacity onPress={openActions} style={styles.navSideEnd} hitSlop={10}>
-          <Text style={styles.navLink}>{t.thread.actions}</Text>
+        <TouchableOpacity
+          onPress={openActions}
+          style={[
+            styles.navCircle,
+            {backgroundColor: theme.fill, borderColor: theme.border},
+          ]}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={t.thread.actions}>
+          <MoreHorizontal size={20} color={theme.label} strokeWidth={2.25} />
         </TouchableOpacity>
       </View>
 
@@ -557,6 +567,7 @@ export function ChatThreadScreen({
             onClearReply={() => setReplyTo(null)}
             onSent={handleComposerSent}
             keyboardHeight={keyboardHeight}
+            onHeightChange={handleComposerHeight}
           />
         )}
       </View>
@@ -592,16 +603,17 @@ const styles = StyleSheet.create({
   navBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    gap: 10,
   },
-  navSide: {width: 78},
-  navSideEnd: {width: 78, alignItems: 'flex-end'},
-  navLink: {
-    color: brand.blue,
-    fontSize: typography.body,
-    fontWeight: '600',
+  navCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: radii.full,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   navTitle: {
     flex: 1,

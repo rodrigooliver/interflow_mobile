@@ -2,12 +2,14 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 import {getThemeColors, type AppThemeMode} from '../theme/tokens';
 import {saveThemePreference} from '../services/appPreferences';
+import {applyThemeStatusBar} from '../theme/statusBar';
 
 interface ThemeContextValue {
   theme: AppThemeMode;
@@ -38,6 +40,11 @@ export function ThemeProvider({
       console.warn('[Theme] failed to persist', e),
     );
   }, []);
+
+  // Garante que o horário/bateria do iPhone voltem ao estilo certo após o loading escuro
+  useEffect(() => {
+    applyThemeStatusBar(theme);
+  }, [theme]);
 
   const value = useMemo(
     () => ({

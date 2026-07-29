@@ -1,25 +1,33 @@
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   View,
   Text,
   FlatList,
+  TouchableOpacity,
   StyleSheet,
   RefreshControl,
-  ActivityIndicator,
   TextInput,
   Alert,
   Platform,
+  Animated,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
 } from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
+import {MoreHorizontal, Plus, Search} from 'lucide-react-native';
 import {useAuth} from '../../contexts/AuthContext';
 import {useTheme} from '../../contexts/ThemeContext';
 import {useI18n} from '../../contexts/I18nContext';
-import {brand, glassShadow, radii, spacing, typography} from '../../theme/tokens';
+import {brand, radii, spacing, typography} from '../../theme/tokens';
 import {
-  applyQuickFilterCriteria,
-  emptyFilterInput,
-} from '../../utils/chatFilterRpc';
-import {PAGE_SIZE, fetchChatsPage, type ChatListItem} from '../../services/chatsApi';
+  fetchInternalChatsFromCollab,
+  internalChatToListItem,
+} from '../../services/internalChatsApi';
+import type {InternalChatSummary} from '../../utils/internalChats';
+import {resolveInternalDisplayName} from '../../utils/internalChats';
 import {supabase} from '../../lib/supabase';
 import {ChatListSkeleton} from '../../components/Skeleton';
 import {ChatListRow} from '../../components/ChatListRow';
@@ -29,84 +37,72 @@ import {
   getFetchErrorKind,
   type FetchErrorKind,
 } from '../../utils/networkError';
+import type {ChatListItem} from '../../services/chatsApi';
 
 interface InternalChatsScreenProps {
   onOpenChat: (chatId: string, title?: string) => void;
   onOpenWeb: (path: string) => void;
 }
 
-function chatTitle(item: ChatListItem): string {
-  return item.group_name?.trim() || item.customer?.name?.trim() || 'Chat';
-}
-
-const INTERNAL_FILTER = {
-  selectedChatTypes: ['internal_group', 'internal_direct'],
-  selectedStatuses: [] as string[],
-  selectedSpamFilter: '',
-  isCollaboratingFilter: '',
-};
-
 export function InternalChatsScreen({
   onOpenChat,
   onOpenWeb,
 }: InternalChatsScreenProps) {
   const {session, currentOrganizationMember} = useAuth();
-  const {theme: mode, colors: theme} = useTheme();
+  const {colors: theme} = useTheme();
   const {t} = useI18n();
+  const insets = useSafeAreaInsets();
 
   const orgId = currentOrganizationMember?.organization_id;
-  const userId = session?.user?.id;
+  // Igual à web: profile_id || user_id
+  const profileId =
+    currentOrganizationMember?.profile_id || session?.user?.id || '';
 
-  const [chats, setChats] = useState<ChatListItem[]>([]);
+  const [chats, setChats] = useState<InternalChatSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [fetchError, setFetchError] = useState<FetchErrorKind | null>(null);
   const [search, setSearch] = useState('');
-  const offsetRef = useRef(0);
+  const [compactInteractive, setCompactInteractive] = useState(false);
+
+  const listRef = useRef<FlatList<ChatListItem>>(null);
+  const searchInputRef = useRef<TextInput>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   const loadChats = useCallback(
-    async (reset = true) => {
-      if (!orgId || !userId) return;
-      const offset = reset ? 0 : offsetRef.current;
-      let input = emptyFilterInput(orgId, userId, 'internal');
-      input = applyQuickFilterCriteria(input, 'internal', INTERNAL_FILTER);
-      input.offset = offset;
-      input.pageSize = PAGE_SIZE;
-      if (search.trim()) input.searchText = search.trim();
+    async (isRefresh = false) => {
+      if (!orgId || !profileId) return;
 
-      if (reset) {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
         setLoading(true);
         setFetchError(null);
-      } else setLoadingMore(true);
+      }
 
       try {
-        const page = await fetchChatsPage(input);
-        setChats(prev => (reset ? page : [...prev, ...page]));
-        offsetRef.current = offset + page.length;
-        setHasMore(page.length >= PAGE_SIZE);
-        if (reset) setFetchError(null);
+        // Mesmo request da web (FloatingChatsContext)
+        const list = await fetchInternalChatsFromCollab(profileId, orgId);
+        setChats(list);
+        setFetchError(null);
       } catch (e) {
         console.error('[InternalChats] load failed', e);
-        if (reset) setFetchError(getFetchErrorKind(e));
+        if (!isRefresh) setFetchError(getFetchErrorKind(e));
       } finally {
         setLoading(false);
-        setLoadingMore(false);
         setRefreshing(false);
       }
     },
-    [orgId, userId, search],
+    [orgId, profileId],
   );
 
   useEffect(() => {
-    offsetRef.current = 0;
     setChats([]);
-    void loadChats(true);
-  }, [orgId, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+    void loadChats(false);
+  }, [orgId, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!orgId) return;
+    if (!orgId || !profileId) return;
     const channel = supabase
       .channel(`native-internal-chats-${orgId}`)
       .on(
@@ -121,49 +117,105 @@ export function InternalChatsScreen({
           void loadChats(true);
         },
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_collaborators',
+          filter: `organization_id=eq.${orgId}`,
+        },
+        () => {
+          void loadChats(true);
+        },
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [orgId, loadChats]);
+  }, [orgId, profileId, loadChats]);
 
-  return (
-    <SafeAreaView
-      style={[styles.root, {backgroundColor: theme.pageBg}]}
-      edges={['top']}>
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: theme.stickyHeader,
-            borderBottomColor: theme.border,
+  // Busca client-side como na web (InternalChats.tsx)
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const source = !q
+      ? chats
+      : chats.filter(chat =>
+          resolveInternalDisplayName(chat, profileId)
+            .toLowerCase()
+            .includes(q),
+        );
+    return source.map(chat => internalChatToListItem(chat, profileId));
+  }, [chats, search, profileId]);
+
+  const onListScroll = useMemo(
+    () =>
+      Animated.event(
+        [{nativeEvent: {contentOffset: {y: scrollY}}}],
+        {
+          useNativeDriver: true,
+          listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            const y = e.nativeEvent.contentOffset.y;
+            const next = y > 48;
+            setCompactInteractive(prev => (prev === next ? prev : next));
           },
-        ]}>
-        <Text style={[styles.title, {color: theme.label}]}>
-          {t.internal.title}
-        </Text>
-        <Text style={[styles.subtitle, {color: theme.tertiaryLabel}]}>
-          {t.internal.subtitle}
-        </Text>
+        },
+      ),
+    [scrollY],
+  );
 
-        <View
-          style={[
-            styles.searchBox,
-            glassShadow(mode),
-            {
-              backgroundColor: theme.searchBg,
-              borderColor: theme.border,
-            },
-          ]}>
-          <Text style={[styles.searchIcon, {color: theme.tertiaryLabel}]}>⌕</Text>
+  const revealSearch = useCallback(() => {
+    listRef.current?.scrollToOffset({offset: 0, animated: true});
+    setTimeout(() => searchInputRef.current?.focus(), 280);
+  }, []);
+
+  const compactOpacity = scrollY.interpolate({
+    inputRange: [12, 64],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const compactTranslateY = scrollY.interpolate({
+    inputRange: [12, 64],
+    outputRange: [-10, 0],
+    extrapolate: 'clamp',
+  });
+
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <View style={styles.headerTop}>
+        <View style={styles.titleBlock}>
+          <Text style={[styles.largeTitle, {color: theme.label}]}>
+            {t.internal.title}
+          </Text>
+          <Text style={[styles.subtitle, {color: theme.tertiaryLabel}]}>
+            {t.internal.subtitle}
+          </Text>
+        </View>
+        <View style={styles.compactActions}>
+          <TouchableOpacity
+            style={[styles.circleBtn, {backgroundColor: theme.fill}]}
+            onPress={() => onOpenWeb('/app/settings')}
+            hitSlop={8}>
+            <MoreHorizontal size={20} color={theme.label} strokeWidth={2.2} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.circleBtnPrimary, {backgroundColor: brand.blue}]}
+            onPress={() => onOpenWeb('/app/internal-chats')}
+            accessibilityLabel={t.chats.newChat}
+            hitSlop={8}>
+            <Plus size={20} color="#FFFFFF" strokeWidth={2.4} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.searchClip}>
+        <View style={[styles.searchBox, {backgroundColor: theme.searchBg}]}>
+          <Search size={16} color={theme.tertiaryLabel} strokeWidth={2.2} />
           <TextInput
+            ref={searchInputRef}
             value={search}
             onChangeText={setSearch}
-            onSubmitEditing={() => {
-              offsetRef.current = 0;
-              void loadChats(true);
-            }}
             placeholder={t.chats.search}
             placeholderTextColor={theme.tertiaryLabel}
             style={[styles.searchInput, {color: theme.label}]}
@@ -172,58 +224,99 @@ export function InternalChatsScreen({
           />
         </View>
       </View>
+    </View>
+  );
+
+  return (
+    <SafeAreaView
+      style={[styles.root, {backgroundColor: theme.pageBg}]}
+      edges={['top']}>
+      <Animated.View
+        pointerEvents={compactInteractive ? 'auto' : 'none'}
+        style={[
+          styles.compactOverlay,
+          {
+            paddingTop: insets.top,
+            backgroundColor: theme.pageBg,
+            opacity: compactOpacity,
+            transform: [{translateY: compactTranslateY}],
+          },
+        ]}>
+        <View style={styles.compactBar}>
+          <TouchableOpacity
+            style={[styles.circleBtn, {backgroundColor: theme.fill}]}
+            onPress={() => onOpenWeb('/app/settings')}
+            hitSlop={8}>
+            <MoreHorizontal size={20} color={theme.label} strokeWidth={2.2} />
+          </TouchableOpacity>
+
+          <Text style={[styles.compactTitle, {color: theme.label}]}>
+            {t.internal.title}
+          </Text>
+
+          <View style={styles.compactActions}>
+            <TouchableOpacity
+              style={[styles.circleBtn, {backgroundColor: theme.fill}]}
+              onPress={revealSearch}
+              hitSlop={8}>
+              <Search size={18} color={theme.label} strokeWidth={2.2} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.circleBtnPrimary, {backgroundColor: brand.blue}]}
+              onPress={() => onOpenWeb('/app/internal-chats')}
+              accessibilityLabel={t.chats.newChat}
+              hitSlop={8}>
+              <Plus size={20} color="#FFFFFF" strokeWidth={2.4} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Animated.View>
 
       {loading && chats.length === 0 ? (
         <ChatListSkeleton />
       ) : (
-        <FlatList
-          style={styles.list}
+        <Animated.FlatList
+          ref={listRef}
+          style={[styles.list, {backgroundColor: theme.pageBg}]}
           contentContainerStyle={[
             styles.listContent,
-            chats.length === 0 && styles.listContentEmpty,
+            filteredItems.length === 0 && styles.listContentEmpty,
           ]}
-          data={chats}
+          data={filteredItems}
           keyExtractor={item => item.id}
+          ListHeaderComponent={listHeader}
+          onScroll={onListScroll}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => {
-                setRefreshing(true);
-                offsetRef.current = 0;
                 void loadChats(true);
               }}
               tintColor={brand.blue}
             />
           }
-          onEndReached={() => {
-            if (!loadingMore && hasMore) void loadChats(false);
-          }}
-          onEndReachedThreshold={0.4}
           ListEmptyComponent={
             fetchError ? (
               <FetchErrorState
                 kind={fetchError}
                 compact
                 onRetry={() => {
-                  offsetRef.current = 0;
-                  void loadChats(true);
+                  void loadChats(false);
                 }}
               />
             ) : (
               <View style={styles.centered}>
                 <Text style={[styles.emptyText, {color: theme.secondaryLabel}]}>
-                  {t.internal.empty}
+                  {search.trim()
+                    ? t.chats.empty
+                    : t.internal.empty}
                 </Text>
               </View>
             )
           }
-          ListFooterComponent={
-            loadingMore ? (
-              <ActivityIndicator style={{margin: spacing.lg}} color={brand.blue} />
-            ) : null
-          }
           renderItem={({item}) => {
-            const title = chatTitle(item);
+            const title = item.group_name?.trim() || 'Chat';
             return (
               <ChatListRow
                 item={item}
@@ -234,7 +327,7 @@ export function InternalChatsScreen({
                     {text: t.chats.cancel, style: 'cancel'},
                     {
                       text: t.chats.openWeb,
-                      onPress: () => onOpenWeb(`/app/chats/${item.id}`),
+                      onPress: () => onOpenWeb(`/app/internal-chats/${item.id}`),
                     },
                   ]);
                 }}
@@ -249,33 +342,83 @@ export function InternalChatsScreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1},
-  header: {
-    paddingHorizontal: spacing.lg,
+  listHeader: {
     paddingBottom: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth * 2,
   },
-  title: {
+  compactOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
+  compactBar: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+  },
+  compactTitle: {
+    position: 'absolute',
+    left: 56 + spacing.lg,
+    right: 96 + spacing.lg,
+    textAlign: 'center',
+    fontSize: typography.headline,
+    fontWeight: '700',
+  },
+  compactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  circleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  circleBtnPrimary: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTop: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+  },
+  titleBlock: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
+  largeTitle: {
     fontSize: typography.largeTitle,
     fontWeight: '700',
-    marginTop: spacing.sm,
+    letterSpacing: 0.2,
   },
   subtitle: {
     fontSize: typography.footnote,
-    marginBottom: spacing.md,
     marginTop: 2,
+  },
+  searchClip: {
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.md,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: radii.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: radii.full,
     paddingHorizontal: spacing.md,
     height: 40,
-    marginBottom: spacing.sm,
-  },
-  searchIcon: {
-    fontSize: 16,
-    marginRight: spacing.sm,
+    gap: 8,
   },
   searchInput: {
     flex: 1,
@@ -284,7 +427,6 @@ const styles = StyleSheet.create({
   },
   list: {flex: 1},
   listContent: {
-    paddingTop: spacing.sm,
     paddingBottom: FLOATING_TAB_BAR_CLEARANCE,
   },
   listContentEmpty: {

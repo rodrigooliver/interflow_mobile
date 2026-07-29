@@ -3,14 +3,19 @@ import {
   View,
   Text,
   TextInput,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Image,
   Alert,
+  Platform,
   type GestureResponderEvent,
+  type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {BlurView} from '@react-native-community/blur';
 import {
   Plus,
   Sparkles,
@@ -38,11 +43,27 @@ import type {ChannelFeatures} from '../../../utils/channelFeatures';
 import {getFetchErrorKind} from '../../../utils/networkError';
 import {ComposerAttachSheet} from './ComposerAttachSheet';
 import {VoiceRecorderOverlay} from './VoiceRecorderOverlay';
-import {AIImproveSheet} from './AIImproveSheet';
+import {AIImproveBar} from './AIImproveBar';
 import {useComposerAttachments} from './useComposerAttachments';
 import {useVoiceRecorder} from './useVoiceRecorder';
 
-export const COMPOSER_LIST_PAD = 120;
+/** Altura típica da pill (~52) + padding do shell — sem safe-area (somada na screen). */
+export const COMPOSER_LIST_PAD = 80;
+
+/** ~2 linhas (lineHeight 20 + paddings) — evita minHeight travar expandido. */
+const TWO_LINES_MIN = 48;
+
+/** Texto longo sem \\n (ex.: stream da IA) — expandir mesmo se contentSize não disparar. */
+const LONG_TEXT_EXPAND = 40;
+
+function shouldExpandInput(value: string, contentHeight?: number) {
+  if (!value) return false;
+  if (value.includes('\n')) return true;
+  if (value.length >= LONG_TEXT_EXPAND) return true;
+  // Soft-wrap real (2+ linhas). Não usar limiar baixo: padding/minHeight enganam.
+  if (contentHeight != null && contentHeight >= TWO_LINES_MIN) return true;
+  return false;
+}
 
 type Props = {
   chatId: string;
@@ -53,6 +74,8 @@ type Props = {
   onSent?: () => void;
   /** Altura do teclado (controlada pela screen para subir lista + composer juntos). */
   keyboardHeight?: number;
+  /** Altura real do composer (pill + IA + reply…) para padding da lista. */
+  onHeightChange?: (height: number) => void;
 };
 
 export function MessageComposer({
@@ -63,6 +86,7 @@ export function MessageComposer({
   onClearReply,
   onSent,
   keyboardHeight = 0,
+  onHeightChange,
 }: Props) {
   const {theme: mode, colors: theme} = useTheme();
   const {t} = useI18n();
@@ -70,7 +94,16 @@ export function MessageComposer({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiMode, setAiMode] = useState(false);
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiSnapshot, setAiSnapshot] = useState('');
+  const [multiline, setMultiline] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const inputScrollRef = useRef<ScrollView>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const heightReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const {
     attachments,
@@ -120,6 +153,7 @@ export function MessageComposer({
     const snapshotText = content;
     const snapshotAttachments = [...attachments];
     setText('');
+    setMultiline(false);
     clearAttachments();
     onClearReply();
     try {
@@ -231,6 +265,68 @@ export function MessageComposer({
     await finishVoiceRef.current(action === 'cancel');
   }, []);
 
+  const textRef = useRef(text);
+  textRef.current = text;
+  const aiModeRef = useRef(aiMode);
+  aiModeRef.current = aiMode;
+  const aiStreamingRef = useRef(aiStreaming);
+  aiStreamingRef.current = aiStreaming;
+
+  // Um scroll por frame — evita “pulo” a cada chunk
+  const scheduleScrollToEnd = useCallback(() => {
+    if (scrollRafRef.current != null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      inputScrollRef.current?.scrollToEnd({animated: false});
+    });
+  }, []);
+
+  const onInputContentSizeChange = useCallback(
+    (e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      const h = e.nativeEvent.contentSize.height;
+      // Dinâmico: expande e recolhe conforme a altura real do texto
+      setMultiline(shouldExpandInput(textRef.current, h));
+      if (aiStreamingRef.current || aiModeRef.current) {
+        scheduleScrollToEnd();
+      }
+    },
+    [scheduleScrollToEnd],
+  );
+
+  const handleChangeText = useCallback(
+    (next: string) => {
+      setText(next);
+      // Dinâmico: ao apagar e voltar a 1 linha, recentraliza
+      setMultiline(shouldExpandInput(next));
+      if (
+        (aiStreamingRef.current || aiModeRef.current) &&
+        shouldExpandInput(next)
+      ) {
+        scheduleScrollToEnd();
+      }
+    },
+    [scheduleScrollToEnd],
+  );
+
+  const openAiMode = useCallback(() => {
+    setAiSnapshot(text);
+    setAiMode(true);
+    // Só expande se o texto atual já precisar — não antecipar altura vazia
+    setMultiline(shouldExpandInput(text));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [text]);
+
+  const closeAiMode = useCallback(() => {
+    setAiMode(false);
+    setAiStreaming(false);
+    setAiSnapshot('');
+  }, []);
+
+  const undoAi = useCallback(() => {
+    setText(aiSnapshot);
+    setMultiline(shouldExpandInput(aiSnapshot));
+  }, [aiSnapshot]);
+
   const shellStyle = useMemo(
     () => [
       styles.shell,
@@ -242,8 +338,50 @@ export function MessageComposer({
     [shellBottom, bottomPad],
   );
 
+  const lastHeightRef = useRef(0);
+  const handleShellLayout = useCallback(
+    (e: {nativeEvent: {layout: {height: number}}}) => {
+      const h = Math.ceil(e.nativeEvent.layout.height);
+      if (h <= 0 || h === lastHeightRef.current) return;
+      lastHeightRef.current = h;
+      // Durante o stream a altura do input fica fixa — não martela a lista
+      if (aiStreamingRef.current) {
+        if (heightReportTimerRef.current) {
+          clearTimeout(heightReportTimerRef.current);
+        }
+        heightReportTimerRef.current = setTimeout(() => {
+          onHeightChange?.(h);
+        }, 120);
+        return;
+      }
+      onHeightChange?.(h);
+    },
+    [onHeightChange],
+  );
+
+  // Expandir só pelo conteúdo real — não por aiMode/streaming (evita saltar ao clicar na ação)
+  const pillExpanded = multiline || text.includes('\n');
+  const inputExpanded = pillExpanded;
+  const pillRadius = inputExpanded ? 22 : 26;
+  const pillBlurType =
+    Platform.OS === 'ios'
+      ? mode === 'dark'
+        ? 'chromeMaterialDark'
+        : 'chromeMaterialLight'
+      : mode === 'dark'
+        ? 'dark'
+        : 'xlight';
+  const pillGlassTint = voice.cancelArmed
+    ? 'rgba(239,68,68,0.14)'
+    : mode === 'dark'
+      ? 'rgba(15,23,42,0.28)'
+      : 'rgba(255,255,255,0.48)';
+
   return (
-    <View style={shellStyle} pointerEvents="box-none">
+    <View
+      style={shellStyle}
+      pointerEvents="box-none"
+      onLayout={handleShellLayout}>
       {replyTo ? (
         <View
           style={[
@@ -303,182 +441,301 @@ export function MessageComposer({
         </View>
       ) : null}
 
+      <AIImproveBar
+        visible={aiMode}
+        text={text}
+        chatId={chatId}
+        organizationId={organizationId}
+        snapshot={aiSnapshot}
+        onTextChange={handleChangeText}
+        onAccept={closeAiMode}
+        onUndo={undoAi}
+        onDismiss={() => {
+          undoAi();
+          closeAiMode();
+        }}
+        onStreamingChange={streaming => {
+          setAiStreaming(streaming);
+          if (streaming) {
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }
+        }}
+        onKeepFocus={() => inputRef.current?.focus()}
+      />
+
+      {/* Flutuante acima do input — só com teclado aberto */}
+      {keyboardOpen && !voice.recording && !voice.locked && !aiMode ? (
+        <View style={styles.aiFloatRow} pointerEvents="box-none">
+          <TouchableOpacity
+            style={[
+              styles.aiFloatBtn,
+              glassShadow(mode),
+              {
+                backgroundColor:
+                  mode === 'dark'
+                    ? 'rgba(15,23,42,0.72)'
+                    : 'rgba(255,255,255,0.92)',
+                borderColor: theme.border,
+              },
+            ]}
+            onPress={openAiMode}
+            disabled={sending}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={t.composer.aiImprove}>
+            <Sparkles size={18} color={brand.blue} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       <View
         style={[
-          styles.card,
+          styles.pillShadow,
           glassShadow(mode),
-          {backgroundColor: theme.card, borderColor: theme.border},
+          {borderRadius: pillRadius},
         ]}>
-        {voice.recording ? (
-          <VoiceRecorderOverlay
-            subscribeMetering={voice.subscribeMetering}
-            formatDuration={voice.formatDuration}
-            slideOffset={voice.slideOffset}
-            cancelArmed={voice.cancelArmed}
-            lockArmed={voice.lockArmed}
-            locked={voice.locked}
-            paused={voice.paused}
+        <View
+          style={[
+            styles.pill,
+            pillExpanded && styles.pillMultiline,
+            {
+              borderColor: voice.cancelArmed ? '#EF4444' : theme.border,
+              borderRadius: pillRadius,
+            },
+          ]}
+          collapsable={false}>
+          <BlurView
+            style={[StyleSheet.absoluteFill, {borderRadius: pillRadius}]}
+            blurType={pillBlurType}
+            blurAmount={Platform.OS === 'ios' ? 10 : 8}
+            {...(Platform.OS === 'android'
+              ? {
+                  overlayColor: pillGlassTint,
+                  downsampleFactor: 5,
+                }
+              : {})}
+            reducedTransparencyFallbackColor={
+              voice.cancelArmed
+                ? mode === 'dark'
+                  ? 'rgba(127,29,29,0.85)'
+                  : 'rgba(254,242,242,0.92)'
+                : mode === 'dark'
+                  ? 'rgba(15,23,42,0.88)'
+                  : 'rgba(255,255,255,0.88)'
+            }
           />
-        ) : (
-          <TextInput
-            style={[
-              styles.input,
-              {backgroundColor: theme.inputBg, color: theme.label},
-            ]}
-            placeholder={t.thread.placeholder}
-            placeholderTextColor={theme.tertiaryLabel}
-            value={text}
-            onChangeText={setText}
-            multiline
-            editable={!sending}
-          />
-        )}
-        <View style={styles.toolbar}>
-          {!voice.recording ? (
-            <View style={styles.toolbarLeft}>
-              <TouchableOpacity
-                onPress={() => setAttachOpen(true)}
-                style={[
-                  styles.iconBtn,
-                  {backgroundColor: theme.fill, borderColor: theme.border},
-                ]}
-                disabled={sending}>
-                <Plus size={18} color={theme.secondaryLabel} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setAiOpen(true)}
-                style={[
-                  styles.iconBtn,
-                  {backgroundColor: theme.fill, borderColor: theme.border},
-                ]}
-                disabled={sending}>
-                <Sparkles size={16} color={brand.blue} />
-              </TouchableOpacity>
-            </View>
-          ) : voice.locked ? (
-            <View style={styles.lockedBar}>
-              <TouchableOpacity
-                onPress={() => void finishVoice(true)}
-                style={[
-                  styles.iconBtn,
-                  {
-                    backgroundColor: 'rgba(239,68,68,0.12)',
-                    borderColor: '#EF4444',
-                  },
-                ]}
-                disabled={sending}>
-                <Trash2 size={16} color="#EF4444" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => void voice.togglePause()}
-                style={[
-                  styles.pauseBtn,
-                  {
-                    borderColor: '#EF4444',
-                    backgroundColor: voice.paused
-                      ? 'rgba(239,68,68,0.12)'
-                      : 'transparent',
-                  },
-                ]}
-                disabled={sending}>
-                {voice.paused ? (
-                  <Play size={18} color="#EF4444" fill="#EF4444" />
-                ) : (
-                  <Pause size={18} color="#EF4444" fill="#EF4444" />
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.send, {backgroundColor: brand.blue}]}
-                onPress={() => void finishVoice(false)}
-                disabled={sending}>
-                {sending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <ArrowUp size={18} color="#fff" strokeWidth={2.5} />
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.toolbarLeft} />
-          )}
-
-          {voice.locked ? null : showMic || voice.recording ? (
-            <View style={styles.micWrap}>
-              {voice.recording && !voice.cancelArmed ? (
-                <View
-                  style={[
-                    styles.lockHint,
-                    {
-                      backgroundColor: voice.lockArmed
-                        ? brand.blue
-                        : theme.card,
-                      borderColor: voice.lockArmed
-                        ? brand.blue
-                        : theme.border,
-                      transform: [
-                        {
-                          translateY: Math.max(
-                            -voice.lockThreshold,
-                            voice.slideUp,
-                          ),
-                        },
-                      ],
-                    },
-                  ]}
-                  pointerEvents="none">
-                  <Lock
-                    size={14}
-                    color={voice.lockArmed ? '#fff' : theme.secondaryLabel}
-                  />
-                </View>
-              ) : null}
-              <View
-                style={[
-                  styles.send,
-                  {
-                    backgroundColor: voice.cancelArmed
-                      ? '#EF4444'
-                      : voice.lockArmed
-                        ? brand.bluePressed
-                        : brand.blue,
-                  },
-                ]}
-                onStartShouldSetResponder={() => true}
-                onMoveShouldSetResponder={() => true}
-                onResponderGrant={onMicGrant}
-                onResponderMove={onMicMove}
-                onResponderRelease={onMicRelease}
-                onResponderTerminate={onMicRelease}>
-                {voice.lockArmed ? (
-                  <Lock size={18} color="#fff" />
-                ) : (
-                  <Mic size={18} color="#fff" />
-                )}
-              </View>
-            </View>
-          ) : (
-            <TouchableOpacity
+          {Platform.OS === 'ios' ? (
+            <View
+              pointerEvents="none"
               style={[
-                styles.send,
+                StyleSheet.absoluteFill,
                 {
-                  backgroundColor: canSend ? brand.blue : theme.fill,
+                  borderRadius: pillRadius,
+                  backgroundColor: pillGlassTint,
                 },
               ]}
-              onPress={handleSend}
-              disabled={!canSend}>
+            />
+          ) : null}
+          {voice.locked ? (
+            <View style={styles.lockedRow}>
+            <TouchableOpacity
+              onPress={() => void finishVoice(true)}
+              style={styles.sideIcon}
+              disabled={sending}
+              hitSlop={8}>
+              <Trash2 size={20} color="#EF4444" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => void voice.togglePause()}
+              style={[
+                styles.pauseBtn,
+                {
+                  borderColor: '#EF4444',
+                  backgroundColor: voice.paused
+                    ? 'rgba(239,68,68,0.12)'
+                    : 'transparent',
+                },
+              ]}
+              disabled={sending}>
+              {voice.paused ? (
+                <Play size={18} color="#EF4444" fill="#EF4444" />
+              ) : (
+                <Pause size={18} color="#EF4444" fill="#EF4444" />
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.lockedWave}>
+              <VoiceRecorderOverlay
+                subscribeMetering={voice.subscribeMetering}
+                formatDuration={voice.formatDuration}
+                slideOffset={0}
+                cancelArmed={false}
+                lockArmed={false}
+                locked
+                paused={voice.paused}
+                embedded
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.actionBtn, {backgroundColor: brand.blue}]}
+              onPress={() => void finishVoice(false)}
+              disabled={sending}>
               {sending ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <ArrowUp
-                  size={18}
-                  color={canSend ? '#fff' : theme.tertiaryLabel}
-                  strokeWidth={2.5}
-                />
+                <ArrowUp size={20} color="#fff" strokeWidth={2.5} />
               )}
             </TouchableOpacity>
-          )}
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.pillRow,
+              inputExpanded ? styles.pillRowMultiline : styles.pillRowSingle,
+            ]}>
+            {!voice.recording ? (
+              <TouchableOpacity
+                onPress={() => setAttachOpen(true)}
+                style={styles.sideIcon}
+                disabled={sending}
+                hitSlop={8}
+                accessibilityRole="button">
+                <Plus size={22} color={theme.label} strokeWidth={2.25} />
+              </TouchableOpacity>
+            ) : null}
+
+            {voice.recording ? (
+              <VoiceRecorderOverlay
+                subscribeMetering={voice.subscribeMetering}
+                formatDuration={voice.formatDuration}
+                slideOffset={voice.slideOffset}
+                cancelArmed={voice.cancelArmed}
+                lockArmed={voice.lockArmed}
+                locked={false}
+                paused={voice.paused}
+                embedded
+              />
+            ) : (
+              <ScrollView
+                ref={inputScrollRef}
+                style={[
+                  styles.inputScroll,
+                  !inputExpanded && styles.inputScrollSingle,
+                ]}
+                contentContainerStyle={[
+                  styles.inputScrollContent,
+                  !inputExpanded && styles.inputScrollContentSingle,
+                ]}
+                keyboardShouldPersistTaps="always"
+                nestedScrollEnabled
+                scrollEnabled={inputExpanded}
+                showsVerticalScrollIndicator={false}
+                onContentSizeChange={() => {
+                  if (aiStreamingRef.current || aiModeRef.current) {
+                    scheduleScrollToEnd();
+                  }
+                }}>
+                <TextInput
+                  ref={inputRef}
+                  style={[
+                    styles.input,
+                    inputExpanded ? styles.inputMultiline : styles.inputSingle,
+                    {color: theme.label},
+                  ]}
+                  placeholder={t.thread.placeholder}
+                  placeholderTextColor={theme.tertiaryLabel}
+                  value={text}
+                  onChangeText={handleChangeText}
+                  onContentSizeChange={onInputContentSizeChange}
+                  multiline
+                  scrollEnabled={false}
+                  blurOnSubmit={false}
+                  // Manter editable no stream — editable={false} fecha o teclado no iOS
+                  editable={!sending}
+                  textAlignVertical={inputExpanded ? 'top' : 'center'}
+                />
+              </ScrollView>
+            )}
+
+            {showMic || voice.recording ? (
+              <View style={styles.micWrap}>
+                {voice.recording && !voice.cancelArmed ? (
+                  <View
+                    style={[
+                      styles.lockHint,
+                      {
+                        backgroundColor: voice.lockArmed
+                          ? brand.blue
+                          : theme.card,
+                        borderColor: voice.lockArmed
+                          ? brand.blue
+                          : theme.border,
+                        transform: [
+                          {
+                            translateY: Math.max(
+                              -voice.lockThreshold,
+                              voice.slideUp,
+                            ),
+                          },
+                        ],
+                      },
+                    ]}
+                    pointerEvents="none">
+                    <Lock
+                      size={14}
+                      color={voice.lockArmed ? '#fff' : theme.secondaryLabel}
+                    />
+                  </View>
+                ) : null}
+                <View
+                  style={[
+                    styles.actionBtn,
+                    {
+                      backgroundColor: voice.cancelArmed
+                        ? '#EF4444'
+                        : voice.lockArmed
+                          ? brand.bluePressed
+                          : brand.blue,
+                    },
+                  ]}
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={onMicGrant}
+                  onResponderMove={onMicMove}
+                  onResponderRelease={onMicRelease}
+                  onResponderTerminate={onMicRelease}>
+                  {voice.lockArmed ? (
+                    <Lock size={20} color="#fff" />
+                  ) : (
+                    <Mic size={20} color="#fff" />
+                  )}
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[
+                  styles.actionBtn,
+                  {
+                    backgroundColor: canSend ? brand.blue : theme.fill,
+                  },
+                ]}
+                onPress={handleSend}
+                disabled={!canSend}>
+                {sending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <ArrowUp
+                    size={20}
+                    color={canSend ? '#fff' : theme.tertiaryLabel}
+                    strokeWidth={2.5}
+                  />
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
         </View>
       </View>
 
@@ -490,14 +747,6 @@ export function MessageComposer({
         onPickFiles={pickFromFiles}
       />
 
-      <AIImproveSheet
-        visible={aiOpen}
-        text={text}
-        chatId={chatId}
-        organizationId={organizationId}
-        onClose={() => setAiOpen(false)}
-        onApply={improved => setText(improved)}
-      />
     </View>
   );
 }
@@ -515,7 +764,7 @@ const styles = StyleSheet.create({
   replyBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: radii.lg,
+    borderRadius: radii.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     overflow: 'hidden',
     paddingRight: 8,
@@ -546,7 +795,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     padding: 8,
-    borderRadius: radii.lg,
+    borderRadius: radii.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
   },
   attachChip: {
@@ -576,76 +825,132 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  card: {
-    borderRadius: radii.xl,
+  aiFloatRow: {
+    alignItems: 'flex-end',
+    paddingRight: 4,
+    marginBottom: -4,
+  },
+  aiFloatBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth * 2,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-    gap: 8,
-    overflow: 'visible',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillShadow: {
     zIndex: 2,
   },
-  input: {
-    minHeight: 36,
-    maxHeight: 120,
-    borderRadius: radii.md,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 8,
-    fontSize: typography.subhead,
-  },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  pill: {
+    // Radius fixo (~metade da altura single-line). Evita 999 que, com
+    // várias linhas, vira cápsula enorme e “empurra” o botão de enviar.
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingLeft: 6,
+    paddingRight: 6,
+    paddingVertical: 4,
+    // visible: hint do lock do mic sobe acima da pill
     overflow: 'visible',
-    zIndex: 3,
+    minHeight: 52,
+    justifyContent: 'center',
   },
-  toolbarLeft: {
+  pillMultiline: {
+    borderRadius: 22,
+    // Menos espaço acima quando o texto cresce; base fica nos botões
+    paddingTop: 4,
+    paddingBottom: 6,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    gap: 4,
+    overflow: 'visible',
+  },
+  // Uma linha: centraliza texto + botões como antes
+  pillRowSingle: {
+    alignItems: 'center',
+  },
+  // Várias linhas: botões na base, menos espaço acima do texto
+  pillRowMultiline: {
+    alignItems: 'flex-end',
+  },
+  lockedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
-  lockedBar: {
+  lockedWave: {
     flex: 1,
-    flexDirection: 'row',
+    minWidth: 0,
+  },
+  sideIcon: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  // ScrollView limita a altura; TextInput cresce (scrollEnabled=false) e o SV rola
+  inputScroll: {
+    flex: 1,
+    minWidth: 0,
+    maxHeight: 120,
+  },
+  inputScrollSingle: {
+    height: 40,
+    maxHeight: 40,
+  },
+  inputScrollContent: {
+    flexGrow: 1,
+  },
+  inputScrollContentSingle: {
+    justifyContent: 'center',
+  },
+  input: {
+    paddingHorizontal: 6,
+    fontSize: typography.subhead,
+    lineHeight: 20,
+    margin: 0,
+  },
+  inputSingle: {
+    paddingTop: 0,
+    paddingBottom: 0,
+    ...(Platform.OS === 'android'
+      ? {textAlignVertical: 'center' as const}
+      : {}),
+  },
+  inputMultiline: {
+    minHeight: 40,
+    paddingTop: Platform.OS === 'ios' ? 4 : 2,
+    paddingBottom: Platform.OS === 'ios' ? 6 : 4,
   },
   pauseBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.md,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+  actionBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  send: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexShrink: 0,
   },
   micWrap: {
     alignItems: 'center',
     justifyContent: 'flex-end',
+    flexShrink: 0,
   },
   lockHint: {
     position: 'absolute',
-    bottom: 44,
+    bottom: 48,
     width: 32,
     height: 32,
-    borderRadius: radii.md,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth * 2,
     alignItems: 'center',
     justifyContent: 'center',

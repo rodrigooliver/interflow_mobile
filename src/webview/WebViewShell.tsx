@@ -20,7 +20,6 @@ import {
   TouchableOpacity,
   PermissionsAndroid,
   Linking,
-  Image,
   type Permission,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
@@ -35,7 +34,14 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import env from '../config/env';
-import SplashLogo from '../assets/splash_logo.png';
+import {
+  LoadingScreenVisual,
+  LOADING_BG_DARK,
+} from '../components/LoadingScreen';
+import {
+  applyBootLoadingStatusBar,
+  applyThemeStatusBar,
+} from '../theme/statusBar';
 import type {AuthSessionPayload} from '../bridge/authProtocol';
 import {
   buildHydrateInjectScript,
@@ -69,8 +75,8 @@ const BASE_URL = env.BASE_URL;
 // Chave para armazenamento da URL pendente
 const PENDING_URL_KEY = 'INTERFLOW_PENDING_URL';
 
-// Cor de fundo da splash screen - usada para evitar flash branco
-const SPLASH_BACKGROUND_COLOR = '#1E2B3D';
+// Loading de abertura sempre escuro — evita flash branco
+const splashBg = (_theme?: 'light' | 'dark') => LOADING_BG_DARK;
 
 // Função auxiliar para extrair o domínio de uma URL de forma segura
 const extractDomain = (url: string): string => {
@@ -372,6 +378,18 @@ const WebViewShell = ({
   const [isInChatPage, setIsInChatPage] = useState(false);
   const [appTheme, setAppTheme] = useState<'light' | 'dark'>('dark');
   const [themeLoaded, setThemeLoaded] = useState(false);
+
+  // Loading escuro → light-content; ao terminar, restaura o tema (light → ícones escuros)
+  useEffect(() => {
+    if (!visible) return;
+    if (loading) {
+      applyBootLoadingStatusBar();
+      return;
+    }
+    if (themeLoaded) {
+      applyThemeStatusBar(appTheme);
+    }
+  }, [visible, loading, themeLoaded, appTheme]);
 
   // Carregar tema salvo do AsyncStorage ao iniciar
   useEffect(() => {
@@ -1716,11 +1734,13 @@ const WebViewShell = ({
     })();
   `;
 
-  // Usar cor da splash durante o loading para evitar flash
-  // MAS sempre respeitar o tema atual para o StatusBar (evitar texto branco em fundo branco)
-  const currentBackground = loading ? SPLASH_BACKGROUND_COLOR : themeColors.background;
-  // StatusBar SEMPRE segue o tema atual, independente do loading
-  const currentStatusBarStyle = themeColors.statusBarStyle;
+  // Fundo escuro no loading; StatusBar: claro no boot, tema do app depois
+  const currentBackground = loading
+    ? splashBg(appTheme)
+    : themeColors.background;
+  const currentStatusBarStyle = loading
+    ? 'light-content'
+    : themeColors.statusBarStyle;
 
   return (
     <SafeAreaProvider>
@@ -2006,10 +2026,9 @@ const WebViewShell = ({
             }}
             renderLoading={() => (
               <View style={styles.splashOverlay}>
-                <Image
-                  source={SplashLogo}
-                  style={styles.splashLogo}
-                  resizeMode="contain"
+                <LoadingScreenVisual
+                  mode={appTheme}
+                  hideNativeSplashOnLayout
                 />
               </View>
             )}
@@ -2018,10 +2037,9 @@ const WebViewShell = ({
         </KeyboardAwareScrollView>
         {loading && visible && (
           <View style={styles.splashOverlay}>
-            <Image
-              source={SplashLogo}
-              style={styles.splashLogo}
-              resizeMode="contain"
+            <LoadingScreenVisual
+              mode={appTheme}
+              hideNativeSplashOnLayout
             />
           </View>
         )}
@@ -2063,7 +2081,7 @@ const WebViewShell = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
     // paddingBottom: Platform.OS === 'ios' ? 0 : 0,
     marginBottom: Platform.OS === 'ios' ? -20 : -7,
     marginTop: Platform.OS === 'ios' ? -5 : 0,
@@ -2077,14 +2095,14 @@ const styles = StyleSheet.create({
   },
   keyboardAvoidingContainer: {
     flex: 1,
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
   },
   keyboardScrollContent: {
     flexGrow: 1,
   },
   webviewContainer: {
     flex: 1,
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
   },
   iosWebviewContainer: {
     paddingBottom: 1,
@@ -2108,7 +2126,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
   },
   loadingOverlay: {
     position: 'absolute',
@@ -2118,21 +2136,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
   },
   splashOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#1E2B3D',
-  },
-  splashLogo: {
-    width: 140,
-    height: 140,
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
   },
   loadingText: {
     marginTop: 10,
@@ -2152,7 +2160,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: SPLASH_BACKGROUND_COLOR,
+    backgroundColor: LOADING_BG_DARK,
     padding: 20,
   },
   errorContent: {

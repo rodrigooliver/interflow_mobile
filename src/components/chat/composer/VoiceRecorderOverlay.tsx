@@ -14,6 +14,8 @@ type Props = {
   lockArmed: boolean;
   locked: boolean;
   paused?: boolean;
+  /** Dentro da pill do composer: sem card próprio. */
+  embedded?: boolean;
 };
 
 /**
@@ -28,6 +30,7 @@ export const VoiceRecorderOverlay = memo(function VoiceRecorderOverlay({
   lockArmed,
   locked,
   paused = false,
+  embedded = false,
 }: Props) {
   const {colors: theme} = useTheme();
   const {t} = useI18n();
@@ -59,17 +62,22 @@ export const VoiceRecorderOverlay = memo(function VoiceRecorderOverlay({
     <View
       style={[
         styles.wrap,
+        embedded && styles.wrapEmbedded,
         {
-          backgroundColor: cancelArmed
-            ? 'rgba(239,68,68,0.12)'
-            : locked || lockArmed
-              ? brand.blueSoft
-              : theme.inputBg,
-          borderColor: cancelArmed
-            ? '#EF4444'
-            : locked || lockArmed
-              ? brand.blue
-              : theme.border,
+          backgroundColor: embedded
+            ? 'transparent'
+            : cancelArmed
+              ? 'rgba(239,68,68,0.12)'
+              : locked || lockArmed
+                ? brand.blueSoft
+                : theme.inputBg,
+          borderColor: embedded
+            ? 'transparent'
+            : cancelArmed
+              ? '#EF4444'
+              : locked || lockArmed
+                ? brand.blue
+                : theme.border,
           transform: [{translateX: slideOffset}],
         },
       ]}>
@@ -128,6 +136,14 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     alignSelf: 'stretch',
+  },
+  wrapEmbedded: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    paddingHorizontal: 4,
+    borderWidth: 0,
+    borderRadius: 0,
   },
   left: {
     flexDirection: 'row',

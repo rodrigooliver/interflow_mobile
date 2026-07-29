@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23504" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
-    <device id="retina6_12" orientation="portrait" appearance="light"/>
+    <device id="retina6_12" orientation="portrait" appearance="dark"/>
     <dependencies>
         <deployment identifier="iOS"/>
         <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23506"/>
@@ -16,16 +16,16 @@
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" misplaced="YES" image="icon" highlightedImage="icon" adjustsImageSizeForAccessibilityContentSizeCategory="YES" translatesAutoresizingMaskIntoConstraints="NO" id="Bph-Yw-HQy">
-                                <rect key="frame" x="126" y="361" width="140" height="140"/>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="splash_logo" translatesAutoresizingMaskIntoConstraints="NO" id="Bph-Yw-HQy">
+                                <rect key="frame" x="106.5" y="404" width="180" height="44"/>
                                 <constraints>
-                                    <constraint firstAttribute="height" constant="140" id="Uxs-Ql-YYT"/>
-                                    <constraint firstAttribute="width" constant="140" id="zVF-Yw-s7o"/>
+                                    <constraint firstAttribute="height" constant="44" id="Uxs-Ql-YYT"/>
+                                    <constraint firstAttribute="width" constant="180" id="zVF-Yw-s7o"/>
                                 </constraints>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
-                        <color key="backgroundColor" red="0.11764705882" green="0.16862745098" blue="0.23921568627" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" red="0.011764705882352941" green="0.027450980392156862" blue="0.070588235294117646" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
                             <constraint firstItem="Bph-Yw-HQy" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="1Gr-Yw-Qcj"/>
                             <constraint firstItem="Bph-Yw-HQy" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="Dph-Yw-Qcj"/>
@@ -38,6 +38,6 @@
         </scene>
     </scenes>
     <resources>
-        <image name="icon" width="333.33334350585938" height="333.33334350585938"/>
+        <image name="splash_logo" width="700" height="180"/>
     </resources>
 </document>

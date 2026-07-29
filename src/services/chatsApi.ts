@@ -128,15 +128,23 @@ export async function fetchChatCount(input: ChatFilterRpcInput) {
 export async function fetchBatchFilterCounts(
   organizationId: string,
   userId: string,
-  filters: Array<{id: string; showCount?: boolean}>,
+  filters: Array<{
+    id: string;
+    showCount?: boolean;
+    filters?: Record<string, unknown>;
+    isDefault?: boolean;
+    isCustom?: boolean;
+  }>,
 ) {
+  // Só filtros com showCount na config de filtros rápidos (geralmente ~4)
   const payload = filters
     .filter(f => f.showCount)
-    .slice(0, 4)
     .map(f => {
       const input = applyQuickFilterCriteria(
         emptyFilterInput(organizationId, userId, f.id),
         f.id,
+        f.filters,
+        {isDefault: f.isDefault, isCustom: f.isCustom},
       );
       const params = buildChatRpcParams(input);
       return {
@@ -155,6 +163,7 @@ export async function fetchBatchFilterCounts(
         tag_ids: params.p_tag_ids,
         stage_ids: params.p_stage_ids,
         funnel_id: params.p_funnel_id,
+        automation_filter: params.p_automation_filter,
       };
     });
 
@@ -169,10 +178,16 @@ export async function fetchBatchFilterCounts(
 
   const result: Record<string, number> = {};
   if (Array.isArray(data)) {
-    for (const row of data) {
-      if (row?.id != null) {
-        result[String(row.id)] = Number(row.count ?? row.total ?? 0);
-      }
+    for (const row of data as Array<{
+      id?: string;
+      filter_id?: string;
+      count?: number | string;
+      total?: number | string;
+    }>) {
+      // RPC web usa filter_id; aceitar id também
+      const key = row?.filter_id ?? row?.id;
+      if (key == null) continue;
+      result[String(key)] = Number(row.count ?? row.total ?? 0);
     }
   } else if (data && typeof data === 'object') {
     Object.assign(result, data as Record<string, number>);

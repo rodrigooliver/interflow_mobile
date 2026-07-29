@@ -23,40 +23,9 @@ type StreamEvent = {
   error?: string;
 };
 
-type StreamResponse = {
-  ok: boolean;
-  status: number;
-  text: () => Promise<string>;
-  body?: {
-    getReader: () => {
-      read: () => Promise<{done: boolean; value?: Uint8Array}>;
-    };
-  };
-};
-
-function decodeUtf8(bytes: Uint8Array, stream = false): string {
-  // TextDecoder pode não existir tipado no RN; runtime Hermes costuma ter
-  type DecoderCtor = new () => {
-    decode: (input?: Uint8Array, options?: {stream?: boolean}) => string;
-  };
-  const Decoder = (globalThis as {TextDecoder?: DecoderCtor}).TextDecoder;
-  if (Decoder) {
-    return new Decoder().decode(bytes, {stream});
-  }
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) {
-    out += String.fromCharCode(bytes[i]);
-  }
-  try {
-    return decodeURIComponent(escape(out));
-  } catch {
-    return out;
-  }
-}
-
 /**
- * SSE client para POST /api/:org/prompts/improve-text
- * Espelha o streamRequest da web.
+ * SSE via XMLHttpRequest — no RN/Hermes, fetch+getReader não entrega chunks
+ * de forma confiável (espelha o contrato da web em src/lib/api.ts).
  */
 export async function improveTextWithAIStream(
   organizationId: string,
@@ -66,6 +35,8 @@ export async function improveTextWithAIStream(
     chatId?: string;
     language?: string;
     customInstructions?: string;
+    promptId?: string;
+    messageIds?: string[];
   },
   callbacks: ImproveStreamCallbacks,
   abortSignal?: AbortSignal,
@@ -77,81 +48,155 @@ export async function improveTextWithAIStream(
     throw new Error('Sem sessão');
   }
 
-  const response = (await fetch(
-    `${env.API_BASE_URL}/${organizationId}/prompts/improve-text`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(data),
-      signal: abortSignal,
-    },
-  )) as unknown as StreamResponse;
+  const url = `${env.API_BASE_URL}/${organizationId}/prompts/improve-text`;
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    const message = errText || `HTTP ${response.status}`;
-    callbacks.onError?.(message);
-    throw new Error(message);
-  }
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let lastIndex = 0;
+    let buffer = '';
+    let accumulatedText = '';
+    let settled = false;
 
-  const reader = response.body?.getReader?.();
-  if (!reader) {
-    const text = await response.text();
-    const accumulated = parseSseBody(text);
-    if (accumulated) {
-      callbacks.onChunk?.('', accumulated);
-      callbacks.onComplete?.(accumulated);
-      return;
+    const finishOk = (content: string) => {
+      if (settled) return;
+      settled = true;
+      callbacks.onComplete?.(content);
+      resolve();
+    };
+
+    const finishErr = (message: string, err?: Error) => {
+      if (settled) return;
+      settled = true;
+      callbacks.onError?.(message);
+      reject(err || new Error(message));
+    };
+
+    const onAbort = () => {
+      xhr.abort();
+      if (settled) return;
+      settled = true;
+      const abortErr = new Error('Aborted');
+      abortErr.name = 'AbortError';
+      reject(abortErr);
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        onAbort();
+        return;
+      }
+      abortSignal.addEventListener('abort', onAbort, {once: true});
     }
-    callbacks.onError?.('Stream indisponível');
-    throw new Error('Stream indisponível');
-  }
 
-  let accumulatedText = '';
-  let buffer = '';
+    const consumeDelta = (delta: string) => {
+      if (!delta) return;
+      buffer += delta;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-  while (true) {
-    const {done, value} = await reader.read();
-    if (done) break;
-    if (!value) continue;
+      for (const line of lines) {
+        if (!line.trim().startsWith('data: ')) continue;
+        try {
+          const jsonData = line.slice(6).trim();
+          if (!jsonData) continue;
+          const eventData = JSON.parse(jsonData) as StreamEvent;
 
-    buffer += decodeUtf8(value, true);
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+          if (eventData.type === 'chunk') {
+            accumulatedText =
+              eventData.accumulated ||
+              accumulatedText + (eventData.content || '');
+            callbacks.onChunk?.(eventData.content || '', accumulatedText);
+          } else if (eventData.type === 'complete') {
+            finishOk(eventData.content || accumulatedText);
+          } else if (eventData.type === 'error') {
+            finishErr(eventData.error || 'Erro desconhecido');
+          }
+        } catch {
+          // linha parcial / JSON incompleto
+        }
+      }
+    };
 
-    for (const line of lines) {
-      if (!line.trim().startsWith('data: ')) continue;
+    const flushNewText = () => {
+      const text = xhr.responseText || '';
+      if (text.length <= lastIndex) return;
+      const next = text.slice(lastIndex);
+      lastIndex = text.length;
+      consumeDelta(next);
+    };
+
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Accept', 'text/event-stream');
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.responseType = 'text';
+
+    xhr.onprogress = () => {
+      flushNewText();
+    };
+
+    xhr.onreadystatechange = () => {
+      // Alguns Android só atualizam responseText aqui durante LOADING
+      if (xhr.readyState === XMLHttpRequest.LOADING) {
+        flushNewText();
+      }
+    };
+
+    xhr.onload = () => {
+      flushNewText();
+      if (settled) return;
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finishErr(
+          (xhr.responseText || '').trim() || `HTTP ${xhr.status}`,
+        );
+        return;
+      }
+
+      if (accumulatedText) {
+        finishOk(accumulatedText);
+        return;
+      }
+
+      // Fallback: corpo JSON não-stream (Accept ignorado pelo proxy etc.)
       try {
-        const jsonData = line.slice(6).trim();
-        if (!jsonData) continue;
-        const eventData = JSON.parse(jsonData) as StreamEvent;
-
-        if (eventData.type === 'chunk') {
-          accumulatedText =
-            eventData.accumulated ||
-            accumulatedText + (eventData.content || '');
-          callbacks.onChunk?.(eventData.content || '', accumulatedText);
-        } else if (eventData.type === 'complete') {
-          const finalText = eventData.content || accumulatedText;
-          callbacks.onComplete?.(finalText);
-          return;
-        } else if (eventData.type === 'error') {
-          callbacks.onError?.(eventData.error || 'Erro desconhecido');
+        const parsed = JSON.parse(xhr.responseText || '{}') as {
+          data?: {text?: string};
+          text?: string;
+        };
+        const fallback =
+          parsed?.data?.text || parsed?.text || parseSseBody(xhr.responseText);
+        if (fallback) {
+          callbacks.onChunk?.('', fallback);
+          finishOk(fallback);
           return;
         }
       } catch {
-        // ignore parse errors for partial lines
+        const fromSse = parseSseBody(xhr.responseText || '');
+        if (fromSse) {
+          callbacks.onChunk?.('', fromSse);
+          finishOk(fromSse);
+          return;
+        }
       }
-    }
-  }
 
-  if (accumulatedText) {
-    callbacks.onComplete?.(accumulatedText);
-  }
+      finishErr('Stream vazio');
+    };
+
+    xhr.onerror = () => {
+      finishErr('Falha de rede');
+    };
+
+    xhr.onabort = () => {
+      if (settled) return;
+      settled = true;
+      const abortErr = new Error('Aborted');
+      abortErr.name = 'AbortError';
+      reject(abortErr);
+    };
+
+    xhr.send(JSON.stringify(data));
+  });
 }
 
 function parseSseBody(body: string): string {

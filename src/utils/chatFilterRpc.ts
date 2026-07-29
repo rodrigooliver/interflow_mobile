@@ -231,15 +231,25 @@ export const DEFAULT_FILTER_CRITERIA: Record<string, Record<string, unknown>> = 
 };
 
 export const DEFAULT_QUICK_FILTERS = [
-  {id: 'unassigned', label: 'Não atribuídos', showCount: true},
-  {id: 'assigned-to-me', label: 'Meus', showCount: true},
-  {id: 'groups', label: 'Grupos', showCount: false},
-  {id: 'collaborating', label: 'Colaborando', showCount: false},
-  {id: 'team', label: 'Equipe', showCount: true},
-  {id: 'completed', label: 'Concluídos', showCount: false},
-  {id: 'spam', label: 'Spam', showCount: false},
-  {id: 'all', label: 'Todos', showCount: true},
+  {id: 'unassigned', label: 'Não atribuídos', showCount: true, color: '#F59E0B'},
+  {id: 'assigned-to-me', label: 'Meus', showCount: true, color: '#3B82F6'},
+  {id: 'groups', label: 'Grupos', showCount: false, color: '#6366F1'},
+  {id: 'collaborating', label: 'Colaborando', showCount: false, color: '#8B5CF6'},
+  {id: 'team', label: 'Equipe', showCount: true, color: '#10B981'},
+  {id: 'completed', label: 'Concluídos', showCount: false, color: '#059669'},
+  {id: 'spam', label: 'Spam', showCount: false, color: '#EF4444'},
+  {id: 'all', label: 'Todos', showCount: true, color: '#6B7280'},
 ];
+
+/** Cor padrão quando o filtro não traz `color` na config. */
+export const DEFAULT_QUICK_FILTER_COLOR = '#6B7280';
+
+export function resolveQuickFilterColor(color?: string | null): string {
+  if (typeof color === 'string' && /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(color)) {
+    return color;
+  }
+  return DEFAULT_QUICK_FILTER_COLOR;
+}
 
 export function emptyFilterInput(
   organizationId: string,
@@ -270,21 +280,90 @@ export function emptyFilterInput(
   };
 }
 
+/**
+ * Mescla critérios salvos com defaults de código (igual getMergedQuickFilterCriteria da web).
+ * Filtro padrão do sistema: código sobrescreve o JSON salvo.
+ * Filtro customizado: usa o JSON salvo por completo.
+ */
+export function getMergedQuickFilterCriteria(filter: {
+  id: string;
+  filters?: Record<string, unknown>;
+  isDefault?: boolean;
+  isCustom?: boolean;
+}): Record<string, unknown> | null {
+  if (!filter.filters) return null;
+  const defaultCriteria =
+    filter.isDefault && !filter.isCustom
+      ? DEFAULT_FILTER_CRITERIA[filter.id]
+      : undefined;
+  return defaultCriteria
+    ? ({...filter.filters, ...defaultCriteria} as Record<string, unknown>)
+    : filter.filters;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === 'string')
+    : [];
+}
+
+/**
+ * Aplica critérios do filtro rápido (padrão ou personalizado) no input do RPC.
+ * Espelha handleQuickFilterClick da web: tags, estágios, funil, equipes, canal, etc.
+ */
 export function applyQuickFilterCriteria(
   base: ChatFilterRpcInput,
   filterId: string,
   customFilters?: Record<string, unknown>,
+  meta?: {isDefault?: boolean; isCustom?: boolean},
 ): ChatFilterRpcInput {
-  const defaults = DEFAULT_FILTER_CRITERIA[filterId] || {};
-  const merged = {...defaults, ...(customFilters || {})};
+  const merged =
+    getMergedQuickFilterCriteria({
+      id: filterId,
+      filters: customFilters ?? DEFAULT_FILTER_CRITERIA[filterId] ?? {},
+      isDefault: meta?.isDefault,
+      isCustom: meta?.isCustom,
+    }) ??
+    ({
+      ...(DEFAULT_FILTER_CRITERIA[filterId] || {}),
+      ...(customFilters || {}),
+    } as Record<string, unknown>);
+
+  // Migração legado: selectedTeam (string) → selectedTeams (array)
+  const selectedTeams = asStringArray(merged.selectedTeams);
+  const legacyTeam =
+    typeof merged.selectedTeam === 'string' && merged.selectedTeam
+      ? [merged.selectedTeam]
+      : [];
+
   return {
     ...base,
     selectedFilter: filterId,
-    selectedStatuses: (merged.selectedStatuses as string[]) || [],
-    selectedChatTypes: (merged.selectedChatTypes as string[]) || [],
-    selectedSpamFilter: (merged.selectedSpamFilter as string) || '',
-    isCollaboratingFilter: (merged.isCollaboratingFilter as string) || '',
-    selectedAgent: (merged.selectedAgent as string) || '',
+    selectedStatuses: asStringArray(merged.selectedStatuses),
+    selectedChatTypes: asStringArray(merged.selectedChatTypes),
+    selectedSpamFilter:
+      typeof merged.selectedSpamFilter === 'string'
+        ? merged.selectedSpamFilter
+        : '',
+    isCollaboratingFilter:
+      typeof merged.isCollaboratingFilter === 'string'
+        ? merged.isCollaboratingFilter
+        : '',
+    selectedAgent:
+      typeof merged.selectedAgent === 'string' ? merged.selectedAgent : '',
+    selectedTeams: selectedTeams.length > 0 ? selectedTeams : legacyTeam,
+    selectedChannel:
+      typeof merged.selectedChannel === 'string' ? merged.selectedChannel : '',
+    selectedTags: asStringArray(merged.selectedTags),
+    selectedFunnel:
+      typeof merged.selectedFunnel === 'string' ? merged.selectedFunnel : '',
+    selectedStages: asStringArray(merged.selectedStages),
+    selectedAutomation:
+      typeof merged.selectedAutomation === 'string'
+        ? merged.selectedAutomation
+        : '',
+    excludeFixedFilter: Boolean(merged.excludeFixedFilter),
     excludeSelfFilter: Boolean(merged.excludeSelfFilter),
+    showUnreadOnly: Boolean(merged.showUnreadOnly),
   };
 }

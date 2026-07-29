@@ -7,13 +7,7 @@
  */
 
 import React, {useEffect, useState, useCallback} from 'react';
-import {
-  ActivityIndicator,
-  View,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-} from 'react-native';
+import {View, StyleSheet, Text, TouchableOpacity} from 'react-native';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {
   SafeAreaProvider,
@@ -28,12 +22,10 @@ import {I18nProvider} from './src/contexts/I18nContext';
 import {HybridApp} from './src/navigation/HybridApp';
 import WebViewShell from './src/webview/WebViewShell';
 import {
-  brand,
-  colors,
-  radii,
-  spacing,
-  SPLASH_BACKGROUND_COLOR,
-} from './src/theme/tokens';
+  BootLoadingScreen,
+  LOADING_BG_DARK,
+} from './src/components/LoadingScreen';
+import {brand, radii, spacing} from './src/theme/tokens';
 import type {AuthSessionPayload} from './src/bridge/authProtocol';
 import {
   clearMirroredSession,
@@ -153,32 +145,28 @@ function App() {
       );
   }, []);
 
-  if (!prefs) {
-    return (
-      <View style={[styles.boot, {backgroundColor: SPLASH_BACKGROUND_COLOR}]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
-  const uiMode = prefs.uiMode || env.CHAT_UI_MODE;
-
+  // Root sempre escuro no boot — elimina flash branco entre splash e app.
   return (
-    <GestureHandlerRootView style={styles.flex}>
-      <SafeAreaProvider>
-        <ThemeProvider initialTheme={prefs.theme}>
-          <I18nProvider initialLocale={prefs.locale}>
-            <RootSwitcher initialMode={uiMode} />
-          </I18nProvider>
-        </ThemeProvider>
-      </SafeAreaProvider>
+    <GestureHandlerRootView
+      style={[styles.flex, {backgroundColor: LOADING_BG_DARK}]}>
+      {!prefs ? (
+        <BootLoadingScreen />
+      ) : (
+        <SafeAreaProvider
+          style={[styles.flex, {backgroundColor: LOADING_BG_DARK}]}>
+          <ThemeProvider initialTheme={prefs.theme}>
+            <I18nProvider initialLocale={prefs.locale}>
+              <RootSwitcher initialMode={prefs.uiMode || env.CHAT_UI_MODE} />
+            </I18nProvider>
+          </ThemeProvider>
+        </SafeAreaProvider>
+      )}
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   flex: {flex: 1},
-  boot: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   webModeBar: {
     position: 'absolute',
     top: 0,

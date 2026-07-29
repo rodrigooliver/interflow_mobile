@@ -1,0 +1,1 @@
+#import "RNSplashScreen.h"

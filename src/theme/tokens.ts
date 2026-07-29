@@ -139,4 +139,5 @@ export function getThemeColors(mode: AppThemeMode) {
   return mode === 'dark' ? dark : light;
 }
 
-export const SPLASH_BACKGROUND_COLOR = '#1E2B3D';
+/** Loading / splash de abertura — sempre escuro */
+export const SPLASH_BACKGROUND_COLOR = '#030712';

@@ -5,23 +5,23 @@ import ReactAppDependencyProvider
 
 @main
 class AppDelegate: RCTAppDelegate {
+  // #030712 — loading sempre escuro
+  private static let bootBg = UIColor(red: 3/255, green: 7/255, blue: 18/255, alpha: 1.0)
+
   override func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
     self.moduleName = "Interflow_mobile"
     self.dependencyProvider = RCTAppDependencyProvider()
-
-    // You can add your custom initial props in the dictionary below.
-    // They will be passed down to the ViewController used by React Native.
     self.initialProps = [:]
 
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
-    
-    // Definir cor de fundo para evitar flash branco entre splash e React Native
-    // Cor #1E2B3D em RGB
+
     if let rootView = self.window.rootViewController?.view {
-      rootView.backgroundColor = UIColor(red: 30/255, green: 43/255, blue: 61/255, alpha: 1.0)
+      rootView.backgroundColor = Self.bootBg
     }
-    self.window.backgroundColor = UIColor(red: 30/255, green: 43/255, blue: 61/255, alpha: 1.0)
-    
+    self.window.backgroundColor = Self.bootBg
+
+    RNSplashScreen.show()
+
     return result
   }
 

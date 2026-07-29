@@ -87,9 +87,11 @@ function openUrl(url?: string | null) {
 function ImageAttachmentPreview({
   url,
   isSticker,
+  out,
 }: {
   url: string;
   isSticker: boolean;
+  out?: boolean;
 }) {
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -97,10 +99,15 @@ function ImageAttachmentPreview({
     <>
       <Pressable
         onPress={() => setViewerOpen(true)}
-        accessibilityRole="imagebutton">
+        accessibilityRole="imagebutton"
+        style={!isSticker && (out ? styles.mediaOutClip : styles.mediaInClip)}>
         <Image
           source={{uri: url}}
-          style={isSticker ? styles.sticker : styles.media}
+          style={
+            isSticker
+              ? styles.sticker
+              : [styles.media, out ? styles.mediaOut : styles.mediaIn]
+          }
           resizeMode={isSticker ? 'contain' : 'cover'}
         />
       </Pressable>
@@ -113,16 +120,19 @@ function ImageAttachmentPreview({
   );
 }
 
-function MetaRow({
+/** Horário + ticks — coluna, embaixo, ou sobreposto no player de áudio. */
+function MessageMeta({
   item,
   out,
   theme,
   privateNote,
+  placement = 'column',
 }: {
   item: ChatMessage;
   out: boolean;
   theme: BubbleTheme;
   privateNote?: boolean;
+  placement?: 'column' | 'below' | 'overlay';
 }) {
   const timeColor = privateNote
     ? 'rgba(146, 64, 14, 0.7)'
@@ -130,18 +140,68 @@ function MetaRow({
       ? 'rgba(255,255,255,0.75)'
       : theme.tertiaryLabel;
 
+  const wrapStyle =
+    placement === 'below'
+      ? styles.metaBelow
+      : placement === 'overlay'
+        ? styles.metaOverlay
+        : styles.metaColumn;
+
   return (
-    <View style={styles.metaRow}>
-      <Text style={[styles.meta, {color: timeColor}]}>
-        {formatMessageTime(item.created_at)}
-      </Text>
-      {out && !privateNote ? (
-        <MessageStatusTicks
-          status={item.status}
-          mutedColor="rgba(255,255,255,0.75)"
-          readColor="#FFFFFF"
-        />
-      ) : null}
+    <View style={wrapStyle}>
+      <View
+        style={[
+          styles.metaTimeRow,
+          placement === 'column' && styles.metaTimeRowColumn,
+        ]}>
+        <Text style={[styles.meta, {color: timeColor}]}>
+          {formatMessageTime(item.created_at)}
+        </Text>
+        {out && !privateNote ? (
+          <MessageStatusTicks
+            status={item.status}
+            mutedColor="rgba(255,255,255,0.75)"
+            readColor="#FFFFFF"
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+/** Conteúdo + meta lado a lado; meta encosta na base direita. */
+function BubbleContentRow({
+  children,
+  meta,
+  textPad,
+  imagePad,
+  out,
+}: {
+  children: React.ReactNode;
+  meta?: React.ReactNode;
+  /** Texto: mais padding no lado oposto ao horário. */
+  textPad?: boolean;
+  /** Imagem: padding mínimo (quase colada na borda). */
+  imagePad?: boolean;
+  /** Cliente (incoming): mais respiro à direita junto do horário. */
+  out?: boolean;
+}) {
+  const padStyle = imagePad
+    ? styles.contentPadImage
+    : textPad
+      ? out
+        ? styles.contentPadText
+        : styles.contentPadTextIn
+      : styles.contentPad;
+
+  if (!meta) {
+    return <View style={padStyle}>{children}</View>;
+  }
+
+  return (
+    <View style={[padStyle, styles.contentRow]}>
+      <View style={styles.contentMain}>{children}</View>
+      {meta}
     </View>
   );
 }
@@ -417,6 +477,7 @@ function AttachmentBlock({
       <ImageAttachmentPreview
         url={url}
         isSticker={isSticker}
+        out={out}
       />
     );
   }
@@ -680,21 +741,25 @@ export const MessageBubble = memo(function MessageBubble({
         pinned={pinned}
         onLongPress={handleLongPress}
         reactions={reactions}>
-        <View style={styles.privateHeader}>
-          <MessageSquare size={14} color="#B45309" />
-          <Text style={styles.privateLabel}>
-            {agentName || labels.privateNote}
-          </Text>
-        </View>
-        {item.content ? (
-          <MarkdownText
-            content={item.content}
-            color="#92400E"
-            linkColor="#B45309"
-            style={styles.bubbleText}
-          />
-        ) : null}
-        <MetaRow item={item} out theme={theme} privateNote />
+        <BubbleContentRow
+          textPad
+          out
+          meta={<MessageMeta item={item} out theme={theme} privateNote />}>
+          <View style={styles.privateHeader}>
+            <MessageSquare size={14} color="#B45309" />
+            <Text style={styles.privateLabel}>
+              {agentName || labels.privateNote}
+            </Text>
+          </View>
+          {item.content ? (
+            <MarkdownText
+              content={item.content}
+              color="#92400E"
+              linkColor="#B45309"
+              style={styles.bubbleText}
+            />
+          ) : null}
+        </BubbleContentRow>
       </BubbleShell>,
     );
   }
@@ -751,39 +816,51 @@ export const MessageBubble = memo(function MessageBubble({
         pinned={pinned}
         onLongPress={handleLongPress}
         reactions={reactions}>
-        <View style={styles.contactRow}>
-          <View
-            style={[
-              styles.contactAvatar,
-              {backgroundColor: out ? 'rgba(255,255,255,0.18)' : theme.fill},
-            ]}>
-            <User size={20} color={textColor} />
-          </View>
-          <View style={styles.contactInfo}>
-            <Text style={[styles.contactName, {color: textColor}]}>
-              {contact?.displayName || labels.contact}
-            </Text>
-            {contact?.phone ? (
-              <Text
-                style={[
-                  styles.contactPhone,
-                  {color: out ? 'rgba(255,255,255,0.75)' : theme.secondaryLabel},
-                ]}>
-                {contact.phone}
+        <BubbleContentRow
+          textPad
+          out={out}
+          meta={<MessageMeta item={item} out={out} theme={theme} />}>
+          <View style={styles.contactRow}>
+            <View
+              style={[
+                styles.contactAvatar,
+                {backgroundColor: out ? 'rgba(255,255,255,0.18)' : theme.fill},
+              ]}>
+              <User size={20} color={textColor} />
+            </View>
+            <View style={styles.contactInfo}>
+              <Text style={[styles.contactName, {color: textColor}]}>
+                {contact?.displayName || labels.contact}
               </Text>
-            ) : null}
-            {contact?.organization ? (
-              <Text
-                style={[
-                  styles.contactPhone,
-                  {color: out ? 'rgba(255,255,255,0.75)' : theme.tertiaryLabel},
-                ]}>
-                {contact.organization}
-              </Text>
-            ) : null}
+              {contact?.phone ? (
+                <Text
+                  style={[
+                    styles.contactPhone,
+                    {
+                      color: out
+                        ? 'rgba(255,255,255,0.75)'
+                        : theme.secondaryLabel,
+                    },
+                  ]}>
+                  {contact.phone}
+                </Text>
+              ) : null}
+              {contact?.organization ? (
+                <Text
+                  style={[
+                    styles.contactPhone,
+                    {
+                      color: out
+                        ? 'rgba(255,255,255,0.75)'
+                        : theme.tertiaryLabel,
+                    },
+                  ]}>
+                  {contact.organization}
+                </Text>
+              ) : null}
+            </View>
           </View>
-        </View>
-        <MetaRow item={item} out={out} theme={theme} />
+        </BubbleContentRow>
       </BubbleShell>,
     );
   }
@@ -807,38 +884,49 @@ export const MessageBubble = memo(function MessageBubble({
         pinned={pinned}
         onLongPress={handleLongPress}
         reactions={reactions}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => openUrl(mapsUrl)}
-          disabled={!mapsUrl}>
-          {thumb ? (
-            <Image source={{uri: thumb}} style={styles.media} resizeMode="cover" />
-          ) : (
-            <View
-              style={[
-                styles.mapPlaceholder,
-                {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill},
-              ]}>
-              <MapPin size={28} color={textColor} />
-              <Text style={[styles.mediaActionText, {color: textColor}]}>
-                {labels.openMap}
-              </Text>
-            </View>
+        <BubbleContentRow
+          out={out}
+          meta={<MessageMeta item={item} out={out} theme={theme} />}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => openUrl(mapsUrl)}
+            disabled={!mapsUrl}>
+            {thumb ? (
+              <Image
+                source={{uri: thumb}}
+                style={styles.media}
+                resizeMode="cover"
+              />
+            ) : (
+              <View
+                style={[
+                  styles.mapPlaceholder,
+                  {
+                    backgroundColor: out
+                      ? 'rgba(255,255,255,0.12)'
+                      : theme.fill,
+                  },
+                ]}>
+                <MapPin size={28} color={textColor} />
+                <Text style={[styles.mediaActionText, {color: textColor}]}>
+                  {labels.openMap}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          {(location?.name || location?.address || item.content) && (
+            <MarkdownText
+              content={
+                [location?.name, location?.address, item.content]
+                  .filter(Boolean)
+                  .join('\n') || ''
+              }
+              color={textColor}
+              linkColor={out ? '#BFDBFE' : brand.blue}
+              style={[styles.bubbleText, styles.contentAfterMedia]}
+            />
           )}
-        </TouchableOpacity>
-        {(location?.name || location?.address || item.content) && (
-          <MarkdownText
-            content={
-              [location?.name, location?.address, item.content]
-                .filter(Boolean)
-                .join('\n') || ''
-            }
-            color={textColor}
-            linkColor={out ? '#BFDBFE' : brand.blue}
-            style={[styles.bubbleText, styles.contentAfterMedia]}
-          />
-        )}
-        <MetaRow item={item} out={out} theme={theme} />
+        </BubbleContentRow>
       </BubbleShell>,
     );
   }
@@ -846,6 +934,7 @@ export const MessageBubble = memo(function MessageBubble({
   // Áudio (tipo dedicado)
   if (type === 'audio') {
     const att = attachments[0];
+    const hasCaption = !!item.content?.trim();
     return maybeHide(
       <BubbleShell
         out={out}
@@ -853,22 +942,50 @@ export const MessageBubble = memo(function MessageBubble({
         pinned={pinned}
         onLongPress={handleLongPress}
         reactions={reactions}>
-        <AttachmentBlock
-          attachment={att || {}}
-          messageType="audio"
-          out={out}
-          theme={theme}
-          labels={labels}
-        />
-        {item.content ? (
-          <MarkdownText
-            content={item.content}
-            color={textColor}
-            linkColor={out ? '#BFDBFE' : brand.blue}
-            style={[styles.bubbleText, styles.contentAfterMedia]}
-          />
-        ) : null}
-        <MetaRow item={item} out={out} theme={theme} />
+        <BubbleContentRow>
+          <View style={!hasCaption ? styles.audioMetaHost : undefined}>
+            <AttachmentBlock
+              attachment={att || {}}
+              messageType="audio"
+              out={out}
+              theme={theme}
+              labels={labels}
+            />
+            {!hasCaption ? (
+              <View
+                style={[
+                  styles.audioMetaOverlay,
+                  !out && styles.audioMetaOverlayIn,
+                ]}
+                pointerEvents="none">
+                <MessageMeta
+                  item={item}
+                  out={out}
+                  theme={theme}
+                  placement="overlay"
+                />
+              </View>
+            ) : null}
+          </View>
+          {hasCaption ? (
+            <>
+              <MarkdownText
+                content={item.content || ''}
+                color={textColor}
+                linkColor={out ? '#BFDBFE' : brand.blue}
+                style={[styles.bubbleText, styles.contentAfterMedia]}
+              />
+              <View style={!out ? styles.customerMetaPadIn : undefined}>
+                <MessageMeta
+                  item={item}
+                  out={out}
+                  theme={theme}
+                  placement="below"
+                />
+              </View>
+            </>
+          ) : null}
+        </BubbleContentRow>
       </BubbleShell>,
     );
   }
@@ -896,164 +1013,246 @@ export const MessageBubble = memo(function MessageBubble({
       ? item.content
       : null;
 
+  const hasImageMedia =
+    type === 'image' ||
+    type === 'sticker' ||
+    attachments.some(att => isImageAttachment(att));
+  const hasAudioMedia =
+    type === 'audio' || attachments.some(att => isAudioAttachment(att));
+  const hasLinkedText = !!item.content?.trim();
+  // Áudio sem texto: horário sobreposto no player (play centralizado)
+  const audioMetaOverlay = hasAudioMedia && !hasLinkedText && !hasImageMedia;
+  // Imagem, ou áudio com caption: horário embaixo
+  const metaBelow =
+    hasImageMedia || (hasAudioMedia && hasLinkedText);
+  const showSideMeta = !metaBelow && !audioMetaOverlay && buttons.length === 0;
+
   return maybeHide(
     <BubbleShell
       out={out}
       theme={theme}
       pinned={pinned}
       onLongPress={handleLongPress}
-      reactions={reactions}>
-      {responseTo ? (
-        <View
-          style={[
-            styles.quote,
-            {
-              backgroundColor: out
-                ? 'rgba(255,255,255,0.14)'
-                : 'rgba(0,0,0,0.05)',
-              borderLeftColor: out ? '#BFDBFE' : brand.blue,
-            },
-          ]}>
-          <Text
-            style={[
-              styles.quoteText,
-              {color: out ? 'rgba(255,255,255,0.85)' : theme.secondaryLabel},
-            ]}
-            numberOfLines={3}>
-            {responseTo.content?.trim() ||
-              (responseTo.type ? String(responseTo.type) : '…')}
-          </Text>
-        </View>
-      ) : null}
-
-      {attachments.length > 0
-        ? attachments.map((att, index) => (
+      reactions={reactions}
+      style={hasImageMedia ? styles.bubbleImage : undefined}>
+      <BubbleContentRow
+        textPad={!hasImageMedia && !hasAudioMedia}
+        imagePad={hasImageMedia}
+        out={out}
+        meta={
+          showSideMeta ? (
+            <MessageMeta item={item} out={out} theme={theme} />
+          ) : null
+        }>
+        <View style={audioMetaOverlay ? styles.audioMetaHost : undefined}>
+          {responseTo ? (
             <View
-              key={`${item.id}-att-${index}`}
-              style={index > 0 ? styles.attGap : undefined}>
-              <AttachmentBlock
-                attachment={att}
-                messageType={type}
-                out={out}
-                theme={theme}
-                labels={labels}
-              />
+              style={[
+                styles.quote,
+                hasImageMedia && styles.imageInnerPad,
+                {
+                  backgroundColor: out
+                    ? 'rgba(255,255,255,0.14)'
+                    : 'rgba(0,0,0,0.05)',
+                  borderLeftColor: out ? '#BFDBFE' : brand.blue,
+                },
+              ]}>
+              <Text
+                style={[
+                  styles.quoteText,
+                  {
+                    color: out
+                      ? 'rgba(255,255,255,0.85)'
+                      : theme.secondaryLabel,
+                  },
+                ]}
+                numberOfLines={3}>
+                {responseTo.content?.trim() ||
+                  (responseTo.type ? String(responseTo.type) : '…')}
+              </Text>
             </View>
-          ))
-        : ['image', 'video', 'document', 'sticker'].includes(type)
-          ? (
-              <AttachmentBlock
-                attachment={{}}
-                messageType={type}
-                out={out}
-                theme={theme}
-                labels={labels}
-              />
-            )
-          : null}
-
-      {templateParts ? (
-        <View style={styles.templateBlock}>
-          {templateParts.header ? (
-            <Text style={[styles.templateHeader, {color: textColor}]}>
-              {templateParts.header}
-            </Text>
           ) : null}
-          {templateParts.body ? (
+
+          {attachments.length > 0
+            ? attachments.map((att, index) => (
+                <View
+                  key={`${item.id}-att-${index}`}
+                  style={index > 0 ? styles.attGap : undefined}>
+                  <AttachmentBlock
+                    attachment={att}
+                    messageType={type}
+                    out={out}
+                    theme={theme}
+                    labels={labels}
+                  />
+                </View>
+              ))
+            : ['image', 'video', 'document', 'sticker'].includes(type)
+              ? (
+                  <AttachmentBlock
+                    attachment={{}}
+                    messageType={type}
+                    out={out}
+                    theme={theme}
+                    labels={labels}
+                  />
+                )
+              : null}
+
+          {templateParts ? (
+            <View style={styles.templateBlock}>
+              {templateParts.header ? (
+                <Text style={[styles.templateHeader, {color: textColor}]}>
+                  {templateParts.header}
+                </Text>
+              ) : null}
+              {templateParts.body ? (
+                <MarkdownText
+                  content={templateParts.body}
+                  color={textColor}
+                  linkColor={out ? '#BFDBFE' : brand.blue}
+                  style={styles.bubbleText}
+                />
+              ) : null}
+              {templateParts.footer ? (
+                <Text
+                  style={[
+                    styles.templateFooter,
+                    {
+                      color: out
+                        ? 'rgba(255,255,255,0.7)'
+                        : theme.tertiaryLabel,
+                    },
+                  ]}>
+                  {templateParts.footer}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {showTextContent ? (
             <MarkdownText
-              content={templateParts.body}
+              content={item.content || ''}
               color={textColor}
               linkColor={out ? '#BFDBFE' : brand.blue}
               style={styles.bubbleText}
             />
           ) : null}
-          {templateParts.footer ? (
-            <Text
+
+          {caption && !showTextContent ? (
+            <MarkdownText
+              content={caption}
+              color={textColor}
+              linkColor={out ? '#BFDBFE' : brand.blue}
               style={[
-                styles.templateFooter,
-                {color: out ? 'rgba(255,255,255,0.7)' : theme.tertiaryLabel},
-              ]}>
-              {templateParts.footer}
+                styles.bubbleText,
+                styles.contentAfterMedia,
+                styles.imageInnerPad,
+              ]}
+            />
+          ) : null}
+
+          {!item.content &&
+          attachments.length === 0 &&
+          !templateParts &&
+          !['image', 'video', 'document', 'sticker', 'text'].includes(type) ? (
+            <Text style={[styles.bubbleText, {color: textColor}]}>
+              [{type}]
             </Text>
           ) : null}
+
+          {audioMetaOverlay && buttons.length === 0 ? (
+            <View
+              style={[
+                styles.audioMetaOverlay,
+                !out && styles.audioMetaOverlayIn,
+              ]}
+              pointerEvents="none">
+              <MessageMeta
+                item={item}
+                out={out}
+                theme={theme}
+                placement="overlay"
+              />
+            </View>
+          ) : null}
         </View>
-      ) : null}
 
-      {showTextContent ? (
-        <MarkdownText
-          content={item.content || ''}
-          color={textColor}
-          linkColor={out ? '#BFDBFE' : brand.blue}
-          style={styles.bubbleText}
-        />
-      ) : null}
-
-      {caption && !showTextContent ? (
-        <MarkdownText
-          content={caption}
-          color={textColor}
-          linkColor={out ? '#BFDBFE' : brand.blue}
-          style={[styles.bubbleText, styles.contentAfterMedia]}
-        />
-      ) : null}
-
-      {!item.content &&
-      attachments.length === 0 &&
-      !templateParts &&
-      !['image', 'video', 'document', 'sticker', 'text'].includes(type) ? (
-        <Text style={[styles.bubbleText, {color: textColor}]}>
-          [{type}]
-        </Text>
-      ) : null}
-
-      <MetaRow item={item} out={out} theme={theme} />
+        {metaBelow && buttons.length === 0 ? (
+          <View
+            style={
+              hasImageMedia
+                ? out
+                  ? styles.imageMetaPad
+                  : styles.imageMetaPadIn
+                : !out
+                  ? styles.customerMetaPadIn
+                  : undefined
+            }>
+            <MessageMeta
+              item={item}
+              out={out}
+              theme={theme}
+              placement="below"
+            />
+          </View>
+        ) : null}
+      </BubbleContentRow>
 
       {buttons.length > 0 ? (
-        <View
-          style={[
-            styles.buttonsFooter,
-            {
-              borderTopColor: out
-                ? 'rgba(255,255,255,0.25)'
-                : theme.bubbleInBorder,
-            },
-          ]}>
-          {buttons.map((btn, index) => (
-            <View
-              key={btn.id || `${item.id}-btn-${index}`}
-              style={[
-                styles.buttonRow,
-                index < buttons.length - 1 && {
-                  borderBottomWidth: StyleSheet.hairlineWidth * 2,
-                  borderBottomColor: out
-                    ? 'rgba(255,255,255,0.2)'
-                    : theme.bubbleInBorder,
-                },
-              ]}>
-              <Text
+        <>
+          <MessageMeta
+            item={item}
+            out={out}
+            theme={theme}
+            placement="below"
+          />
+          <View
+            style={[
+              styles.buttonsFooter,
+              {
+                borderTopColor: out
+                  ? 'rgba(255,255,255,0.25)'
+                  : theme.bubbleInBorder,
+              },
+            ]}>
+            {buttons.map((btn, index) => (
+              <View
+                key={btn.id || `${item.id}-btn-${index}`}
                 style={[
-                  styles.buttonText,
-                  {color: out ? '#BFDBFE' : brand.blue},
+                  styles.buttonRow,
+                  index < buttons.length - 1 && {
+                    borderBottomWidth: StyleSheet.hairlineWidth * 2,
+                    borderBottomColor: out
+                      ? 'rgba(255,255,255,0.2)'
+                      : theme.bubbleInBorder,
+                  },
                 ]}>
-                {btn.title}
-              </Text>
-            </View>
-          ))}
-        </View>
+                <Text
+                  style={[
+                    styles.buttonText,
+                    {color: out ? '#BFDBFE' : brand.blue},
+                  ]}>
+                  {btn.title}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </>
       ) : null}
     </BubbleShell>,
   );
 });
 
 const styles = StyleSheet.create({
-  bubbleWrap: {marginBottom: 8, maxWidth: '78%'},
+  bubbleWrap: {marginBottom: 4, maxWidth: '78%'},
   bubbleWrapPinned: {
     maxWidth: '100%',
     width: '100%',
     marginBottom: 0,
     alignSelf: 'stretch',
   },
-  bubbleWrapWithReactions: {marginBottom: 14},
+  bubbleWrapWithReactions: {marginBottom: 12},
   bubbleWrapOut: {alignSelf: 'flex-end'},
   bubbleWrapIn: {alignSelf: 'flex-start'},
   hiddenBubble: {opacity: 0},
@@ -1079,9 +1278,12 @@ const styles = StyleSheet.create({
   reactionOverlap: {marginLeft: -6},
   reactionBadgeText: {fontSize: 12},
   bubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    // Borda mínima estilo WhatsApp
+    padding: 2,
     overflow: 'hidden',
+  },
+  bubbleImage: {
+    padding: 1,
   },
   bubbleOut: {
     borderRadius: radii.lg,
@@ -1091,23 +1293,125 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderBottomLeftRadius: 6,
   },
+  contentPad: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  // Texto agente: padding no lado oposto; horário fica colado no conteúdo
+  contentPadText: {
+    paddingLeft: 10,
+    paddingRight: 2,
+    paddingVertical: 5,
+  },
+  // Texto cliente: mais respiro à direita para o horário não colar na borda
+  contentPadTextIn: {
+    paddingLeft: 10,
+    paddingRight: 8,
+    paddingVertical: 5,
+  },
+  contentPadImage: {
+    padding: 0,
+  },
+  imageInnerPad: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  imageMetaPad: {
+    paddingHorizontal: 4,
+    paddingBottom: 1,
+  },
+  // Cliente + imagem: horário bem afastado da borda
+  imageMetaPadIn: {
+    paddingLeft: 4,
+    paddingRight: 14,
+    paddingBottom: 2,
+  },
+  // Cliente (áudio/outros com meta embaixo)
+  customerMetaPadIn: {
+    paddingLeft: 4,
+    paddingRight: 8,
+    paddingBottom: 1,
+  },
+  contentRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 4,
+  },
+  contentMain: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  metaColumn: {
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    paddingLeft: 4,
+  },
+  metaBelow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  metaOverlay: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  audioMetaHost: {
+    position: 'relative',
+  },
+  audioMetaOverlay: {
+    position: 'absolute',
+    right: 0,
+    bottom: 1,
+  },
+  audioMetaOverlayIn: {
+    right: 8,
+  },
+  metaTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  metaTimeRowColumn: {
+    marginBottom: -1,
+  },
   bubbleText: {
     fontSize: typography.subhead,
-    lineHeight: 20,
+    lineHeight: 19,
   },
   contentAfterMedia: {
-    marginTop: 6,
+    marginTop: 4,
   },
+  // Radius interno acompanha a bolha (lg=16, pad imagem=1 → ~15; canto da cauda=6 → ~5)
   media: {
     width: 220,
     height: 160,
-    borderRadius: radii.md,
-    marginBottom: 2,
+    borderRadius: radii.lg - 1,
+    marginBottom: 0,
+  },
+  mediaOut: {
+    borderBottomRightRadius: 5,
+  },
+  mediaIn: {
+    borderBottomLeftRadius: 5,
+  },
+  mediaOutClip: {
+    borderRadius: radii.lg - 1,
+    borderBottomRightRadius: 5,
+    overflow: 'hidden',
+  },
+  mediaInClip: {
+    borderRadius: radii.lg - 1,
+    borderBottomLeftRadius: 5,
+    overflow: 'hidden',
   },
   sticker: {
     width: 140,
     height: 140,
-    marginBottom: 2,
+    marginBottom: 0,
   },
   mediaAction: {
     minWidth: 200,
@@ -1158,15 +1462,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginTop: 4,
-    gap: 2,
-  },
   meta: {
     fontSize: 11,
+    lineHeight: 13,
+    fontVariant: ['tabular-nums'],
   },
   systemWrap: {
     alignItems: 'center',
@@ -1311,7 +1610,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   privateLabel: {
     fontSize: typography.caption,
@@ -1346,16 +1645,16 @@ const styles = StyleSheet.create({
   quote: {
     borderLeftWidth: 3,
     borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    marginBottom: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    marginBottom: 4,
   },
   quoteText: {
     fontSize: typography.caption,
     lineHeight: 16,
   },
   templateBlock: {
-    gap: 4,
+    gap: 2,
   },
   templateHeader: {
     fontSize: typography.subhead,
@@ -1366,14 +1665,14 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   buttonsFooter: {
-    marginTop: 8,
-    marginHorizontal: -14,
-    marginBottom: -10,
+    marginTop: 2,
+    marginHorizontal: -2,
+    marginBottom: -2,
     borderTopWidth: StyleSheet.hairlineWidth * 2,
   },
   buttonRow: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     alignItems: 'center',
   },
   buttonText: {
@@ -1381,6 +1680,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   attGap: {
-    marginTop: 8,
+    marginTop: 4,
   },
 });

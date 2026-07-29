@@ -3,7 +3,6 @@ import {
   View,
   StyleSheet,
   StatusBar,
-  ActivityIndicator,
   TouchableOpacity,
   Text,
   BackHandler,
@@ -11,7 +10,6 @@ import {
 } from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import SplashScreen from 'react-native-splash-screen';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {OneSignal, LogLevel} from 'react-native-onesignal';
 import * as Sentry from '@sentry/react-native';
@@ -21,11 +19,13 @@ import {ChatThreadScreen} from '../screens/chat/ChatThreadScreen';
 import {MessageDetailsScreen} from '../screens/chat/MessageDetailsScreen';
 import {MainTabs} from './MainTabs';
 import WebViewShell from '../webview/WebViewShell';
+import {LoadingScreen, loadingBackground} from '../components/LoadingScreen';
 import type {AuthSessionPayload} from '../bridge/authProtocol';
 import {extractChatIdFromPath, isChatPath} from '../bridge/authProtocol';
 import env from '../config/env';
 import type {ChatUIMode} from '../config/env';
 import {colors, radii, spacing} from '../theme/tokens';
+import {applyThemeStatusBar} from '../theme/statusBar';
 import {clearMirroredSession, mirrorWebSession} from '../services/sessionMirror';
 import type {ChatMessage} from '../services/chatsApi';
 
@@ -54,7 +54,7 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
     getSessionPayload,
     lastAuthEvent,
   } = useAuth();
-  const {colors: theme} = useTheme();
+  const {theme: themeMode, colors: theme} = useTheme();
 
   const [webVisible, setWebVisible] = useState(false);
   const [webPath, setWebPath] = useState<string | null>(null);
@@ -63,12 +63,10 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
   const onesignalReady = useRef(false);
 
   useEffect(() => {
-    try {
-      if (SplashScreen.hide) SplashScreen.hide();
-    } catch {
-      // ignore
+    if (!loading) {
+      applyThemeStatusBar(themeMode);
     }
-  }, []);
+  }, [loading, themeMode]);
 
   useEffect(() => {
     if (onesignalReady.current) return;
@@ -187,19 +185,15 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
   }, [needsWebLogin]);
 
   if (loading) {
-    return (
-      <View style={[styles.centered, {backgroundColor: theme.pageBg}]}>
-        <StatusBar
-          barStyle={theme.statusBarStyle}
-          backgroundColor={theme.pageBg}
-        />
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   return (
-    <View style={styles.root}>
+    <View
+      style={[
+        styles.root,
+        {backgroundColor: theme.pageBg || loadingBackground(themeMode)},
+      ]}>
       <StatusBar
         barStyle={theme.statusBarStyle}
         backgroundColor={theme.pageBg}
