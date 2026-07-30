@@ -307,6 +307,7 @@ type SystemLabels = {
   userStart: string;
   userStartAuto: string;
   autoAssigned: string;
+  autoAssignedUntil?: string;
   userEntered: string;
   userLeft: string;
   userTransferred: string;
@@ -317,8 +318,13 @@ type SystemLabels = {
   userReopened: string;
   callReceived: string;
   tagAdded: string;
+  tagAddedByAgent?: string;
+  tagAddedByFlow?: string;
   tagRemoved: string;
+  tagRemovedByAgent?: string;
+  tagRemovedByFlow?: string;
   stageUpdate: string;
+  noStage?: string;
   task: string;
   info: string;
   privateNote: string;
@@ -333,17 +339,107 @@ type SystemLabels = {
   template: string;
 };
 
+export type StageUpdateInfo = {
+  oldStageName: string;
+  newStageName: string;
+  oldStageColor: string | null;
+  newStageColor: string | null;
+  funnelName: string;
+  notes: string;
+};
+
+/** Cor do ícone de evento de sistema (alinhado à web). */
+export function getSystemEventIconColor(
+  type: string,
+  isDark: boolean,
+): string {
+  switch (type) {
+    case 'user_start':
+    case 'user_start_auto':
+    case 'user_reopened':
+    case 'info':
+    case 'call_received':
+      return isDark ? '#60A5FA' : '#3B82F6';
+    case 'auto_assigned':
+      return isDark ? '#22D3EE' : '#06B6D4';
+    case 'user_entered':
+    case 'user_join':
+    case 'user_closed':
+      return isDark ? '#34D399' : '#10B981';
+    case 'user_left':
+      return isDark ? '#9CA3AF' : '#9CA3AF';
+    case 'user_transferred':
+    case 'user_transferred_himself':
+    case 'team_transferred':
+    case 'stage_update':
+      return isDark ? '#818CF8' : '#6366F1';
+    case 'tag_added':
+    case 'tag_removed':
+      return isDark ? '#60A5FA' : '#3B82F6';
+    case 'task':
+      return isDark ? '#34D399' : '#059669';
+    default:
+      return isDark ? '#9CA3AF' : '#9CA3AF';
+  }
+}
+
+export function getStageUpdateInfo(
+  msg: ChatMessage,
+  fallbacks: {stageUpdate: string; noStage: string},
+): StageUpdateInfo {
+  const metadata = getMetadata(msg);
+  return {
+    oldStageName:
+      (typeof metadata.old_stage_name === 'string' && metadata.old_stage_name) ||
+      fallbacks.noStage,
+    newStageName:
+      (typeof metadata.new_stage_name === 'string' && metadata.new_stage_name) ||
+      '',
+    oldStageColor:
+      typeof metadata.old_stage_color === 'string'
+        ? metadata.old_stage_color
+        : null,
+    newStageColor:
+      typeof metadata.new_stage_color === 'string'
+        ? metadata.new_stage_color
+        : null,
+    funnelName:
+      (typeof metadata.funnel_name === 'string' && metadata.funnel_name) ||
+      fallbacks.stageUpdate,
+    notes:
+      typeof metadata.notes === 'string' ? metadata.notes.trim() : '',
+  };
+}
+
+function resolveSystemAgentName(msg: ChatMessage): string {
+  const metadata = getMetadata(msg);
+  const handledBy = metadata.handled_by as
+    | {agent_name?: string; agent_nickname?: string}
+    | undefined;
+  let agentName =
+    handledBy?.agent_name || handledBy?.agent_nickname || '';
+  const senderName = (
+    msg.sender_agent as {full_name?: string} | undefined
+  )?.full_name;
+  if (senderName) {
+    agentName = senderName;
+  }
+  if (!agentName && typeof metadata.agent_name === 'string') {
+    agentName = metadata.agent_name;
+  }
+  return agentName;
+}
+
 export function getSystemEventLabel(
   msg: ChatMessage,
   labels: SystemLabels,
 ): string {
   const type = msg.type || '';
   const metadata = getMetadata(msg);
-  const agent =
-    (msg.sender_agent as {full_name?: string} | undefined)?.full_name ||
-    (typeof metadata.agent_name === 'string' ? metadata.agent_name : '') ||
-    '';
-  const name = agent || (typeof msg.content === 'string' ? msg.content : '');
+  const agent = resolveSystemAgentName(msg);
+  const name =
+    agent ||
+    (typeof msg.content === 'string' ? msg.content.trim() : '');
 
   const withName = (template: string) =>
     name
@@ -355,13 +451,43 @@ export function getSystemEventLabel(
           .replace(/\s+/g, ' ')
           .trim();
 
+  const tagLabel = (
+    base: string,
+    byAgent?: string,
+    byFlow?: string,
+  ) => {
+    const tag = (metadata.tag_name as string) || '';
+    const source = (metadata.source as string) || 'manual';
+    const template =
+      source === 'ai_agent' && byAgent
+        ? byAgent
+        : source === 'flow' && byFlow
+          ? byFlow
+          : base;
+    return template.replace('{tag}', tag);
+  };
+
   switch (type) {
     case 'user_start':
       return withName(labels.userStart);
     case 'user_start_auto':
       return withName(labels.userStartAuto);
-    case 'auto_assigned':
+    case 'auto_assigned': {
+      const reservedUntil =
+        typeof metadata.reserved_until === 'string'
+          ? metadata.reserved_until
+          : undefined;
+      if (name && reservedUntil && labels.autoAssignedUntil) {
+        const until = new Date(reservedUntil).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return labels.autoAssignedUntil
+          .replace('{name}', name)
+          .replace('{until}', until);
+      }
       return withName(labels.autoAssigned);
+    }
     case 'user_entered':
       return withName(labels.userEntered);
     case 'user_left':
@@ -370,8 +496,18 @@ export function getSystemEventLabel(
       return withName(labels.userTransferred);
     case 'user_transferred_himself':
       return withName(labels.userTransferredHimself);
-    case 'team_transferred':
-      return withName(labels.teamTransferred);
+    case 'team_transferred': {
+      const teamName =
+        (typeof msg.content === 'string' && msg.content.trim()) || agent;
+      return teamName
+        ? labels.teamTransferred.replace('{name}', teamName)
+        : labels.teamTransferred
+            .replace('{name} ', '')
+            .replace(' {name}', '')
+            .replace('{name}', '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
     case 'user_join':
       return withName(labels.userJoin);
     case 'user_closed':
@@ -380,14 +516,18 @@ export function getSystemEventLabel(
       return withName(labels.userReopened);
     case 'call_received':
       return labels.callReceived;
-    case 'tag_added': {
-      const tag = (metadata.tag_name as string) || '';
-      return labels.tagAdded.replace('{tag}', tag);
-    }
-    case 'tag_removed': {
-      const tag = (metadata.tag_name as string) || '';
-      return labels.tagRemoved.replace('{tag}', tag);
-    }
+    case 'tag_added':
+      return tagLabel(
+        labels.tagAdded,
+        labels.tagAddedByAgent,
+        labels.tagAddedByFlow,
+      );
+    case 'tag_removed':
+      return tagLabel(
+        labels.tagRemoved,
+        labels.tagRemovedByAgent,
+        labels.tagRemovedByFlow,
+      );
     case 'stage_update':
       return msg.content?.trim() || labels.stageUpdate;
     case 'task':
@@ -466,4 +606,198 @@ export function getInteractiveButtons(
   }
 
   return buttons;
+}
+
+export type ExternalAdReply = {
+  title: string;
+  body?: string;
+  thumbnail?: string;
+  thumbnailUrl?: string;
+  thumbnailURL?: string;
+  sourceUrl?: string;
+  sourceURL?: string;
+  sourceType?: string;
+  mediaType?: string;
+  showAdAttribution?: boolean;
+  renderLargerThumbnail?: boolean;
+};
+
+/** Extrai externalAdReply / metadata.ad (mesmos caminhos da web). */
+export function getExternalAdReply(
+  msg: ChatMessage,
+): ExternalAdReply | undefined {
+  const msgData = getMetadata(msg) as Record<string, any>;
+
+  if (msgData?.ad?.title) {
+    return msgData.ad as ExternalAdReply;
+  }
+
+  const msgContent = msgData?.msgContent;
+  const possiblePaths = [
+    msgContent?.extendedTextMessage?.contextInfo?.externalAdReply,
+    msgContent?.audioMessage?.contextInfo?.externalAdReply,
+    msgContent?.videoMessage?.contextInfo?.externalAdReply,
+    msgContent?.imageMessage?.contextInfo?.externalAdReply,
+    msgData?._data?.Message?.extendedTextMessage?.contextInfo?.externalAdReply,
+    msgData?._data?.RawMessage?.extendedTextMessage?.contextInfo
+      ?.externalAdReply,
+    msgData?._data?.Message?.audioMessage?.contextInfo?.externalAdReply,
+    msgData?._data?.RawMessage?.audioMessage?.contextInfo?.externalAdReply,
+    msgContent?.Message?.audioMessage?.contextInfo?.externalAdReply,
+    msgData?.audioMessage?.contextInfo?.externalAdReply,
+    msgData?.extendedTextMessage?.contextInfo?.externalAdReply,
+  ];
+
+  for (const adReply of possiblePaths) {
+    if (adReply && typeof adReply === 'object' && adReply.title) {
+      return adReply as ExternalAdReply;
+    }
+  }
+
+  return undefined;
+}
+
+export type EmailMessageMetadata = {
+  html?: string;
+  text?: string;
+  subject?: string;
+  date?: string | Date;
+  from?: {
+    text?: string;
+    value?: Array<{name?: string; address?: string}>;
+  };
+  to?: {
+    text?: string;
+    value?: Array<{name?: string; address?: string}>;
+  };
+};
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function hasEmailOriginalContent(
+  metadata: unknown,
+): metadata is EmailMessageMetadata {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const email = metadata as EmailMessageMetadata;
+  return Boolean(asTrimmedString(email.html) || asTrimmedString(email.text));
+}
+
+export function getEmailSubject(metadata: unknown): string {
+  if (!metadata || typeof metadata !== 'object') return '';
+  return asTrimmedString((metadata as EmailMessageMetadata).subject);
+}
+
+export function formatEmailAddress(
+  field?: EmailMessageMetadata['from'],
+): string {
+  if (!field) return '';
+  const text = asTrimmedString(field.text);
+  if (text) return text;
+  const first = field.value?.[0];
+  if (!first) return '';
+  if (first.name && first.address) return `${first.name} <${first.address}>`;
+  return first.address || first.name || '';
+}
+
+export function formatEmailDate(date?: string | Date): string {
+  if (!date) return '';
+  const parsed = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(parsed.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(parsed);
+  } catch {
+    return parsed.toLocaleString();
+  }
+}
+
+function emailThemeStyles(isDark: boolean): string {
+  if (!isDark) {
+    return `
+      html, body {
+        background-color: #ffffff;
+        color: #202124;
+      }
+      body {
+        margin: 16px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 14px;
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      img { max-width: 100%; height: auto; }
+      a { color: #1a73e8; }
+      blockquote {
+        margin: 0;
+        padding-left: 10px;
+        border-left: 2px solid #dadce0;
+        color: #5f6368;
+      }
+    `;
+  }
+
+  // Força texto legível no dark: e-mails costumam vir com color:#000 inline.
+  return `
+    :root { color-scheme: dark; }
+    html, body {
+      background-color: #111827 !important;
+      color: #E5E7EB !important;
+    }
+    body {
+      margin: 16px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    p, div, span, td, th, li, font, strong, em, b, i, u, h1, h2, h3, h4, h5, h6,
+    label, pre, code {
+      color: #E5E7EB !important;
+    }
+    a, a span, a font {
+      color: #93C5FD !important;
+    }
+    img { max-width: 100%; height: auto; }
+    blockquote {
+      margin: 0;
+      padding-left: 10px;
+      border-left: 2px solid #4B5563;
+      color: #D1D5DB !important;
+    }
+  `;
+}
+
+function injectEmailTheme(html: string, isDark: boolean): string {
+  const styleTag = `<style id="interflow-email-theme">${emailThemeStyles(isDark)}</style>`;
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${styleTag}</head>`);
+  }
+  if (/<html[\s>]/i.test(html)) {
+    return html.replace(/<html([^>]*)>/i, `<html$1><head>${styleTag}</head>`);
+  }
+  return html;
+}
+
+export function buildEmailSrcDoc(html: string, isDark = false): string {
+  if (/<html[\s>]/i.test(html)) {
+    return injectEmailTheme(html, isDark);
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <base target="_blank" rel="noopener noreferrer" />
+  <style id="interflow-email-theme">${emailThemeStyles(isDark)}</style>
+</head>
+<body>${html}</body>
+</html>`;
 }

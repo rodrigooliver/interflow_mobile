@@ -66,7 +66,6 @@ import {DateSeparator} from '../../components/chat/DateSeparator';
 import {
   buildMessageListRows,
   findNeighborMessage,
-  formatMessageDayLabel,
   getSpacingAfterMessage,
   resolveStickyDateLabel,
   STICKY_DATE_SLOT,
@@ -323,7 +322,7 @@ export function ChatThreadScreen({
       listComposerPadRef.current,
       dateLabelsRef.current,
     );
-    if (next && next !== stickyDateLabelRef.current) {
+    if (next !== stickyDateLabelRef.current) {
       stickyDateLabelRef.current = next;
       setStickyDateLabel(next);
     }
@@ -1001,12 +1000,7 @@ export function ChatThreadScreen({
   useEffect(() => {
     if (!listSettled) return;
     syncStickyDate();
-    if (stickyDateLabelRef.current || !messages[0]) return;
-    const fallback = formatMessageDayLabel(messages[0].created_at, dateLabels);
-    if (!fallback) return;
-    stickyDateLabelRef.current = fallback;
-    setStickyDateLabel(fallback);
-  }, [listRows, headerChromeHeight, listComposerPad, syncStickyDate, messages, dateLabels, listSettled]);
+  }, [listRows, headerChromeHeight, listComposerPad, syncStickyDate, listSettled]);
 
   useEffect(() => () => clearSettleTimer(), [clearSettleTimer]);
 

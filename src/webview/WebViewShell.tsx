@@ -51,10 +51,7 @@ import {
   extractChatIdFromPath,
   isChatPath,
 } from '../bridge/authProtocol';
-import {
-  loadAppPreferences,
-  saveThemePreference,
-} from '../services/appPreferences';
+import {useTheme} from '../contexts/ThemeContext';
 
 // Tipo para o evento de notificação
 interface NotificationEvent {
@@ -408,8 +405,30 @@ const WebViewShell = ({
     message: string;
   } | null>(null);
   const [isInChatPage, setIsInChatPage] = useState(false);
-  const [appTheme, setAppTheme] = useState<'light' | 'dark'>('dark');
-  const [themeLoaded, setThemeLoaded] = useState(false);
+  // Fonte de verdade do tema nativo = ThemeContext / Settings.
+  // appTheme local só acompanha a web para status bar do shell — nunca persiste.
+  const {theme: nativeTheme} = useTheme();
+  const [appTheme, setAppTheme] = useState<'light' | 'dark'>(nativeTheme);
+
+  useEffect(() => {
+    setAppTheme(nativeTheme);
+  }, [nativeTheme]);
+
+  // Empurra o tema do Settings para a web já carregada (sem regravar AsyncStorage).
+  useEffect(() => {
+    if (!webViewRef.current || !initialUrlLoaded) return;
+    webViewRef.current.injectJavaScript(`
+      (function() {
+        try {
+          var theme = '${nativeTheme}';
+          localStorage.setItem('theme', theme);
+          document.documentElement.classList.remove('light', 'dark');
+          document.documentElement.classList.add(theme);
+        } catch (e) {}
+      })();
+      true;
+    `);
+  }, [nativeTheme, initialUrlLoaded]);
 
   // Loading escuro → light-content; ao terminar, restaura o tema (light → ícones escuros)
   useEffect(() => {
@@ -418,33 +437,8 @@ const WebViewShell = ({
       applyBootLoadingStatusBar();
       return;
     }
-    if (themeLoaded) {
-      applyThemeStatusBar(appTheme);
-    }
-  }, [visible, loading, themeLoaded, appTheme]);
-
-  // Carregar tema salvo do AsyncStorage ao iniciar
-  useEffect(() => {
-    const loadSavedTheme = async () => {
-      try {
-        const prefs = await loadAppPreferences();
-        setAppTheme(prefs.theme);
-      } catch (error) {
-        console.error('Erro ao carregar tema:', error);
-      } finally {
-        setThemeLoaded(true);
-      }
-    };
-    loadSavedTheme();
-  }, []);
-
-  // Salvar tema no AsyncStorage quando mudar
-  useEffect(() => {
-    if (!themeLoaded) return;
-    void saveThemePreference(appTheme).catch(error => {
-      console.error('Erro ao salvar tema:', error);
-    });
-  }, [appTheme, themeLoaded]);
+    applyThemeStatusBar(appTheme);
+  }, [visible, loading, appTheme]);
 
   // Cores dinâmicas baseadas no tema
   const themeColors = {
@@ -1169,7 +1163,7 @@ const WebViewShell = ({
         console.log('Botão voltar do chat simulado com sucesso');
         // Opcional: Executar alguma ação adicional se necessário
       }
-      // Verificar se é uma mudança de tema
+      // Tema da web → só UI/status bar do shell. Persistência fica no ThemeContext.
       else if (data.type === 'themeChange' && data.theme) {
         const newTheme = data.theme === 'light' ? 'light' : 'dark';
         setAppTheme(newTheme);
@@ -1513,11 +1507,20 @@ const WebViewShell = ({
         document.body.classList.add('native-app');
         document.body.classList.add('platform-${Platform.OS}');
         
-        // Sincronizar tema inicial com o localStorage ou preferência do sistema
+        // Preferência nativa (Settings) tem prioridade sobre localStorage / SO.
+        // Evita o WebView sobrescrever o tema salvo pelo app.
+        const nativeTheme = '${nativeTheme}';
         const savedTheme = localStorage.getItem('theme');
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-        
+        const initialTheme =
+          (nativeTheme === 'light' || nativeTheme === 'dark')
+            ? nativeTheme
+            : (savedTheme || (prefersDark ? 'dark' : 'light'));
+
+        try {
+          localStorage.setItem('theme', initialTheme);
+        } catch (e) {}
+
         document.documentElement.classList.remove('light', 'dark');
         document.documentElement.classList.add(initialTheme);
         

@@ -114,6 +114,9 @@ const ESTIMATED_MESSAGE_ROW_HEIGHT = 72;
 /**
  * Resolve o label do sticker a partir do item sob a linha sticky.
  * FlatList inverted: offset 0 = fundo (msgs novas); paddingTop = composer.
+ *
+ * Retorna null quando o chip inline de data já ocupa o topo (evita duplicar
+ * o sticker flutuante com o DateSeparator da lista).
  */
 export function resolveStickyDateLabel(
   rows: MessageListRow[],
@@ -138,14 +141,14 @@ export function resolveStickyDateLabel(
         : ESTIMATED_MESSAGE_ROW_HEIGHT);
     acc += h;
     if (acc >= target) {
-      if (row.kind === 'date') return row.label || null;
+      // Chip de data já está na linha sticky — some o floating
+      if (row.kind === 'date') return null;
       return (
         formatMessageDayLabel(row.message.created_at, labels) || null
       );
     }
   }
 
-  const last = rows[rows.length - 1];
-  if (last.kind === 'date') return last.label || null;
-  return formatMessageDayLabel(last.message.created_at, labels) || null;
+  // Topo da lista: o último row é o chip da data mais antiga (já visível)
+  return null;
 }

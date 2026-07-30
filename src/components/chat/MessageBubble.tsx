@@ -36,6 +36,17 @@ import {
   Lightbulb,
   ChevronRight,
   ChevronDown,
+  UserPlus,
+  UserMinus,
+  UserCog,
+  Users,
+  CheckCircle,
+  RefreshCw,
+  RotateCcw,
+  Info,
+  Building,
+  SquareCheck,
+  Mail,
 } from 'lucide-react-native';
 import {useI18n} from '../../contexts/I18nContext';
 import {useTheme} from '../../contexts/ThemeContext';
@@ -45,6 +56,8 @@ import {MarkdownText} from '../MarkdownText';
 import {MessageStatusTicks} from '../MessageStatusTicks';
 import {ImageViewerModal} from './ImageViewerModal';
 import {ChatAudioPlayer} from './ChatAudioPlayer';
+import {WhatsAppAdMessage} from './WhatsAppAdMessage';
+import {EmailPreviewModal} from './EmailPreviewModal';
 import {
   attachmentLabel,
   CHAT_MEDIA_MAX_WIDTH,
@@ -54,15 +67,21 @@ import {
   formatMessageTime,
   getAttachments,
   getConstrainedMediaSize,
+  getEmailSubject,
+  getExternalAdReply,
   getInteractiveButtons,
   getMetadata,
+  getStageUpdateInfo,
+  getSystemEventIconColor,
   getSystemEventLabel,
+  hasEmailOriginalContent,
   isAudioAttachment,
   isImageAttachment,
   isOutgoing,
   isSystemEvent,
   isVideoAttachment,
   parseTemplateParts,
+  type EmailMessageMetadata,
   type MessageAnchor,
   type MessageAttachment,
 } from './messageHelpers';
@@ -337,10 +356,59 @@ function BubbleContentRow({
   );
 }
 
+function hexToRgba(hex: string, alpha: number): string | null {
+  let value = hex.startsWith('#') ? hex : `#${hex}`;
+  const short = /^#?([a-f\d])([a-f\d])([a-f\d])$/i.exec(value);
+  if (short) {
+    value = `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  }
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(value);
+  if (!result) return null;
+  return `rgba(${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}, ${alpha})`;
+}
+
+function renderSystemIcon(type: string, color: string): React.ReactNode {
+  const props = {size: 14 as const, color, strokeWidth: 2.2};
+  switch (type) {
+    case 'user_start':
+      return <MessageSquare {...props} />;
+    case 'user_start_auto':
+    case 'auto_assigned':
+      return <RotateCcw {...props} />;
+    case 'user_entered':
+    case 'user_join':
+      return <UserPlus {...props} />;
+    case 'user_left':
+      return <UserMinus {...props} />;
+    case 'user_transferred':
+    case 'user_transferred_himself':
+    case 'stage_update':
+      return <UserCog {...props} />;
+    case 'team_transferred':
+      return <Users {...props} />;
+    case 'user_closed':
+      return <CheckCircle {...props} />;
+    case 'user_reopened':
+      return <RefreshCw {...props} />;
+    case 'info':
+      return <Info {...props} />;
+    case 'task':
+      return <SquareCheck {...props} />;
+    case 'call_received':
+      return <Phone {...props} />;
+    case 'tag_added':
+    case 'tag_removed':
+      return <Tag {...props} />;
+    default:
+      return null;
+  }
+}
+
 function SystemChip({
   label,
   time,
   icon,
+  accentDot,
   theme,
   variant = 'default',
   onLongPress,
@@ -348,6 +416,7 @@ function SystemChip({
   label: string;
   time: string;
   icon?: React.ReactNode;
+  accentDot?: string | null;
   theme: BubbleTheme;
   variant?: 'default' | 'alert';
   onLongPress?: (anchor: MessageAnchor) => void;
@@ -378,6 +447,11 @@ function SystemChip({
           },
         ]}>
         {icon}
+        {accentDot ? (
+          <View
+            style={[styles.systemAccentDot, {backgroundColor: accentDot}]}
+          />
+        ) : null}
         <Text
           style={[
             isAlert ? styles.alertText : styles.systemText,
@@ -392,6 +466,157 @@ function SystemChip({
               !isAlert && {color: theme.tertiaryLabel},
             ]}>
             {time}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function StageBadge({
+  name,
+  color,
+  isNew,
+  theme,
+  isDark,
+}: {
+  name: string;
+  color: string | null;
+  isNew: boolean;
+  theme: BubbleTheme;
+  isDark: boolean;
+}) {
+  const fallbackBg = isNew
+    ? isDark
+      ? 'rgba(16, 185, 129, 0.22)'
+      : 'rgba(209, 250, 229, 1)'
+    : isDark
+      ? 'rgba(75, 85, 99, 0.35)'
+      : 'rgba(243, 244, 246, 1)';
+  const fallbackBorder = isNew
+    ? isDark
+      ? 'rgba(16, 185, 129, 0.45)'
+      : 'rgba(167, 243, 208, 1)'
+    : theme.border;
+  const fallbackText = isNew
+    ? isDark
+      ? '#A7F3D0'
+      : '#065F46'
+    : theme.secondaryLabel;
+
+  return (
+    <View
+      style={[
+        styles.stageBadge,
+        {
+          backgroundColor: color
+            ? hexToRgba(color, isNew ? 0.14 : 0.1) || fallbackBg
+            : fallbackBg,
+          borderColor: color
+            ? isNew
+              ? color
+              : hexToRgba(color, 0.35) || fallbackBorder
+            : fallbackBorder,
+        },
+      ]}>
+      <Text
+        style={[
+          styles.stageBadgeText,
+          {color: color || fallbackText},
+        ]}
+        numberOfLines={2}>
+        {name}
+      </Text>
+    </View>
+  );
+}
+
+function StageUpdateCard({
+  item,
+  time,
+  theme,
+  stageUpdateLabel,
+  noStageLabel,
+  onLongPress,
+}: {
+  item: ChatMessage;
+  time: string;
+  theme: BubbleTheme;
+  stageUpdateLabel: string;
+  noStageLabel: string;
+  onLongPress?: (anchor: MessageAnchor) => void;
+}) {
+  const {theme: mode} = useTheme();
+  const isDark = mode === 'dark';
+  const wrapRef = useRef<View>(null);
+  const info = getStageUpdateInfo(item, {
+    stageUpdate: stageUpdateLabel,
+    noStage: noStageLabel,
+  });
+
+  const handleLongPress = () => {
+    if (!onLongPress) return;
+    hapticLongPress();
+    wrapRef.current?.measureInWindow((x, y, width, height) => {
+      onLongPress({x, y, width, height});
+    });
+  };
+
+  const cardBg = isDark ? 'rgba(31, 41, 55, 0.72)' : 'rgba(255, 255, 255, 0.95)';
+  const cardBorder = isDark ? 'rgba(59, 130, 246, 0.22)' : 'rgba(229, 231, 235, 0.9)';
+  const iconBg = isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(236, 253, 245, 1)';
+  const iconColor = isDark ? '#34D399' : '#059669';
+
+  return (
+    <Pressable
+      ref={wrapRef}
+      style={styles.stageWrap}
+      onLongPress={onLongPress ? handleLongPress : undefined}
+      delayLongPress={320}>
+      <View
+        style={[
+          styles.stageCard,
+          {backgroundColor: cardBg, borderColor: cardBorder},
+        ]}>
+        <View style={styles.stageHeader}>
+          <View style={[styles.stageIconBox, {backgroundColor: iconBg}]}>
+            <Building size={12} color={iconColor} strokeWidth={2.2} />
+          </View>
+          <Text
+            style={[styles.stageFunnel, {color: theme.secondaryLabel}]}
+            numberOfLines={1}>
+            {info.funnelName}
+          </Text>
+          {time ? (
+            <Text style={[styles.systemTime, {color: theme.tertiaryLabel}]}>
+              {time}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={styles.stageRow}>
+          <StageBadge
+            name={info.oldStageName}
+            color={info.oldStageColor}
+            isNew={false}
+            theme={theme}
+            isDark={isDark}
+          />
+          <ChevronRight size={14} color={iconColor} strokeWidth={2.4} />
+          <StageBadge
+            name={info.newStageName || noStageLabel}
+            color={info.newStageColor}
+            isNew
+            theme={theme}
+            isDark={isDark}
+          />
+        </View>
+
+        {info.notes ? (
+          <Text
+            style={[styles.stageNotes, {color: theme.secondaryLabel}]}
+            numberOfLines={4}>
+            {info.notes}
           </Text>
         ) : null}
       </View>
@@ -789,6 +1014,7 @@ export const MessageBubble = memo(function MessageBubble({
   const attachments = getAttachments(item);
   const textColor = out ? theme.bubbleOutText : theme.bubbleInText;
   const time = formatMessageTime(item.created_at);
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
 
   const handleLongPress = onLongPress
     ? (anchor: MessageAnchor) => onLongPress(item, anchor)
@@ -797,11 +1023,20 @@ export const MessageBubble = memo(function MessageBubble({
     | Record<string, {reaction?: string} | string>
     | null;
 
+  const {theme: mode} = useTheme();
+  const isDark = mode === 'dark';
+
+  const externalAdReply = useMemo(() => getExternalAdReply(item), [item]);
+  const hasWhatsAppAd = Boolean(externalAdReply?.title);
+  const canPreviewEmail = hasEmailOriginalContent(metadata);
+  const emailSubject = getEmailSubject(metadata);
+
   const labels = useMemo(
     () => ({
       userStart: t.messages.userStart,
       userStartAuto: t.messages.userStartAuto,
       autoAssigned: t.messages.autoAssigned,
+      autoAssignedUntil: t.messages.autoAssignedUntil,
       userEntered: t.messages.userEntered,
       userLeft: t.messages.userLeft,
       userTransferred: t.messages.userTransferred,
@@ -812,8 +1047,13 @@ export const MessageBubble = memo(function MessageBubble({
       userReopened: t.messages.userReopened,
       callReceived: t.messages.callReceived,
       tagAdded: t.messages.tagAdded,
+      tagAddedByAgent: t.messages.tagAddedByAgent,
+      tagAddedByFlow: t.messages.tagAddedByFlow,
       tagRemoved: t.messages.tagRemoved,
+      tagRemovedByAgent: t.messages.tagRemovedByAgent,
+      tagRemovedByFlow: t.messages.tagRemovedByFlow,
       stageUpdate: t.messages.stageUpdate,
+      noStage: t.messages.noStage,
       task: t.messages.task,
       info: t.messages.info,
       privateNote: t.messages.privateNote,
@@ -911,27 +1151,41 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
+  if (type === 'stage_update') {
+    return maybeHide(
+      <StageUpdateCard
+        item={item}
+        time={time}
+        theme={theme}
+        stageUpdateLabel={labels.stageUpdate}
+        noStageLabel={labels.noStage}
+        onLongPress={handleLongPress}
+      />,
+    );
+  }
+
   if (
     isSystemEvent(item) ||
     type === 'call_received' ||
     type === 'tag_added' ||
     type === 'tag_removed' ||
-    type === 'task' ||
-    type === 'stage_update'
+    type === 'task'
   ) {
     const label = getSystemEventLabel(item, labels);
-    const iconColor = theme.secondaryLabel;
-    let icon: React.ReactNode = null;
-    if (type === 'call_received') {
-      icon = <Phone size={14} color={iconColor} />;
-    } else if (type === 'tag_added' || type === 'tag_removed') {
-      icon = <Tag size={14} color={iconColor} />;
-    }
+    const iconColor = getSystemEventIconColor(type, isDark);
+    const icon = renderSystemIcon(type, iconColor);
+    const tagColor =
+      type === 'tag_added' || type === 'tag_removed'
+        ? typeof metadata.tag_color === 'string'
+          ? metadata.tag_color
+          : null
+        : null;
     return maybeHide(
       <SystemChip
         label={label}
         time={time}
         icon={icon}
+        accentDot={tagColor}
         theme={theme}
         onLongPress={handleLongPress}
       />,
@@ -967,6 +1221,14 @@ export const MessageBubble = memo(function MessageBubble({
           textPad
           out={out}
           meta={<MessageMeta item={item} out={out} theme={theme} />}>
+          {hasWhatsAppAd && externalAdReply ? (
+            <WhatsAppAdMessage
+              adReply={externalAdReply}
+              out={out}
+              sponsoredLabel={t.messages.sponsoredAd}
+              viewAdLabel={t.messages.viewAd}
+            />
+          ) : null}
           <View style={styles.contactRow}>
             <View
               style={[
@@ -1034,6 +1296,14 @@ export const MessageBubble = memo(function MessageBubble({
         <BubbleContentRow
           out={out}
           meta={<MessageMeta item={item} out={out} theme={theme} />}>
+          {hasWhatsAppAd && externalAdReply ? (
+            <WhatsAppAdMessage
+              adReply={externalAdReply}
+              out={out}
+              sponsoredLabel={t.messages.sponsoredAd}
+              viewAdLabel={t.messages.viewAd}
+            />
+          ) : null}
           <MediaPressable
             onPress={() => openUrl(mapsUrl)}
             disabled={!mapsUrl}
@@ -1090,6 +1360,14 @@ export const MessageBubble = memo(function MessageBubble({
         onLongPress={handleLongPress}
         reactions={reactions}>
         <BubbleContentRow>
+          {hasWhatsAppAd && externalAdReply ? (
+            <WhatsAppAdMessage
+              adReply={externalAdReply}
+              out={out}
+              sponsoredLabel={t.messages.sponsoredAd}
+              viewAdLabel={t.messages.viewAd}
+            />
+          ) : null}
           <View style={!hasCaption ? styles.audioMetaHost : undefined}>
             <AttachmentBlock
               attachment={att || {}}
@@ -1166,15 +1444,21 @@ export const MessageBubble = memo(function MessageBubble({
     attachments.some(att => isImageAttachment(att));
   const hasAudioMedia =
     type === 'audio' || attachments.some(att => isAudioAttachment(att));
-  const hasLinkedText = !!item.content?.trim();
+  const hasLinkedText = !!item.content?.trim() || !!emailSubject;
   // Áudio sem texto: horário sobreposto no player (play centralizado)
   const audioMetaOverlay = hasAudioMedia && !hasLinkedText && !hasImageMedia;
   // Imagem, ou áudio com caption: horário embaixo
   const metaBelow =
     hasImageMedia || (hasAudioMedia && hasLinkedText);
   const showSideMeta = !metaBelow && !audioMetaOverlay && buttons.length === 0;
+  const showEmailBody =
+    (showTextContent || canPreviewEmail) && !templateParts;
+  const emailHeaderPad = out
+    ? styles.contentPadText
+    : styles.contentPadTextIn;
 
   return maybeHide(
+    <>
     <BubbleShell
       out={out}
       theme={theme}
@@ -1182,17 +1466,83 @@ export const MessageBubble = memo(function MessageBubble({
       onLongPress={handleLongPress}
       reactions={reactions}
       style={hasImageMedia ? styles.bubbleImage : undefined}>
+      {/* Título do e-mail em largura total — ignora a coluna do horário. */}
+      {emailSubject && !templateParts ? (
+        <View style={[emailHeaderPad, styles.emailSubjectFull]}>
+          {responseTo ? (
+            <View
+              style={[
+                styles.quote,
+                {
+                  backgroundColor: out
+                    ? 'rgba(255,255,255,0.14)'
+                    : 'rgba(0,0,0,0.05)',
+                  borderLeftColor: out ? '#BFDBFE' : brand.blue,
+                },
+              ]}>
+              <Text
+                style={[
+                  styles.quoteText,
+                  {
+                    color: out
+                      ? 'rgba(255,255,255,0.85)'
+                      : theme.secondaryLabel,
+                  },
+                ]}
+                numberOfLines={3}>
+                {responseTo.content?.trim() ||
+                  (responseTo.type ? String(responseTo.type) : '…')}
+              </Text>
+            </View>
+          ) : null}
+          <View style={styles.emailSubjectRow}>
+            <Mail
+              size={14}
+              color={out ? 'rgba(255,255,255,0.75)' : theme.secondaryLabel}
+              strokeWidth={2.2}
+            />
+            <Text
+              style={[styles.emailSubject, {color: textColor}]}
+              numberOfLines={1}
+              ellipsizeMode="tail">
+              {emailSubject}
+            </Text>
+          </View>
+          {showEmailBody ? (
+            <View
+              style={[
+                styles.emailDivider,
+                {
+                  borderTopColor: out
+                    ? 'rgba(147, 197, 253, 0.45)'
+                    : theme.border,
+                },
+              ]}
+            />
+          ) : showSideMeta ? (
+            <View style={!out ? styles.customerMetaPadIn : undefined}>
+              <MessageMeta
+                item={item}
+                out={out}
+                theme={theme}
+                placement="below"
+              />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       <BubbleContentRow
         textPad={!hasImageMedia && !hasAudioMedia}
         imagePad={hasImageMedia}
         out={out}
         meta={
-          showSideMeta ? (
+          showSideMeta && !(emailSubject && !showEmailBody) ? (
             <MessageMeta item={item} out={out} theme={theme} />
           ) : null
         }>
         <View style={audioMetaOverlay ? styles.audioMetaHost : undefined}>
-          {responseTo ? (
+          {!emailSubject && responseTo ? (
             <View
               style={[
                 styles.quote,
@@ -1218,6 +1568,15 @@ export const MessageBubble = memo(function MessageBubble({
                   (responseTo.type ? String(responseTo.type) : '…')}
               </Text>
             </View>
+          ) : null}
+
+          {hasWhatsAppAd && externalAdReply ? (
+            <WhatsAppAdMessage
+              adReply={externalAdReply}
+              out={out}
+              sponsoredLabel={t.messages.sponsoredAd}
+              viewAdLabel={t.messages.viewAd}
+            />
           ) : null}
 
           {attachments.length > 0
@@ -1277,13 +1636,42 @@ export const MessageBubble = memo(function MessageBubble({
             </View>
           ) : null}
 
-          {showTextContent ? (
-            <MarkdownText
-              content={item.content || ''}
-              color={textColor}
-              linkColor={brand.blue}
-              style={styles.bubbleText}
-            />
+          {showEmailBody ? (
+            <View style={styles.emailBlock}>
+              {showTextContent ? (
+                <MarkdownText
+                  content={item.content || ''}
+                  color={textColor}
+                  linkColor={brand.blue}
+                  style={styles.bubbleText}
+                />
+              ) : null}
+              {canPreviewEmail ? (
+                <Pressable
+                  onPress={() => setEmailPreviewOpen(true)}
+                  style={({pressed}) => [
+                    styles.emailPreviewBtn,
+                    pressed && {opacity: 0.7},
+                  ]}>
+                  <Mail
+                    size={13}
+                    color={out ? 'rgba(191, 219, 254, 0.95)' : brand.blue}
+                    strokeWidth={2.2}
+                  />
+                  <Text
+                    style={[
+                      styles.emailPreviewText,
+                      {
+                        color: out
+                          ? 'rgba(191, 219, 254, 0.95)'
+                          : brand.blue,
+                      },
+                    ]}>
+                    {t.messages.viewFullEmail}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
 
           {caption && !showTextContent ? (
@@ -1300,6 +1688,8 @@ export const MessageBubble = memo(function MessageBubble({
           ) : null}
 
           {!item.content &&
+          !emailSubject &&
+          !hasWhatsAppAd &&
           attachments.length === 0 &&
           !templateParts &&
           !['image', 'video', 'document', 'sticker', 'text'].includes(type) ? (
@@ -1387,7 +1777,15 @@ export const MessageBubble = memo(function MessageBubble({
           </View>
         </>
       ) : null}
-    </BubbleShell>,
+    </BubbleShell>
+    {canPreviewEmail ? (
+      <EmailPreviewModal
+        visible={emailPreviewOpen}
+        onClose={() => setEmailPreviewOpen(false)}
+        email={metadata as EmailMessageMetadata}
+      />
+    ) : null}
+    </>,
   );
 });
 
@@ -1632,6 +2030,103 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radii.full,
     borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  systemAccentDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+  emailBlock: {
+    gap: 6,
+    minWidth: 0,
+  },
+  emailSubjectFull: {
+    paddingBottom: 0,
+    gap: 6,
+  },
+  emailSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    width: '100%',
+  },
+  emailSubject: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: typography.subhead,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  emailDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth * 2,
+    marginTop: 2,
+    marginBottom: 0,
+  },
+  emailPreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingVertical: 2,
+  },
+  emailPreviewText: {
+    fontSize: typography.caption,
+    fontWeight: '600',
+  },
+  stageWrap: {
+    alignItems: 'center',
+    marginVertical: 2,
+    paddingHorizontal: spacing.md,
+  },
+  stageCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  stageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stageIconBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stageFunnel: {
+    flex: 1,
+    fontSize: typography.caption,
+    fontWeight: '600',
+  },
+  stageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stageBadge: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  stageBadgeText: {
+    fontSize: typography.caption,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  stageNotes: {
+    fontSize: typography.caption,
+    lineHeight: 16,
   },
   contextWrap: {
     alignSelf: 'stretch',
