@@ -6,8 +6,9 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useTheme} from '../contexts/ThemeContext';
-import {spacing} from '../theme/tokens';
+import {radii, spacing} from '../theme/tokens';
 
 type BoneProps = {
   width: number | `${number}%`;
@@ -26,12 +27,12 @@ function usePulse(min = 0.45, max = 0.85) {
       Animated.sequence([
         Animated.timing(opacity, {
           toValue: max,
-          duration: 800,
+          duration: 900,
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
           toValue: min,
-          duration: 800,
+          duration: 900,
           useNativeDriver: true,
         }),
       ]),
@@ -122,29 +123,130 @@ export function ChatListSkeleton({rows = 8}: {rows?: number}) {
   );
 }
 
-/** Larguras variadas, tudo centralizado — sem imitar lado in/out. */
-const THREAD_WIDTHS = [0.42, 0.56, 0.36, 0.5, 0.44, 0.58];
+type ThreadBubbleSpec = {
+  side: 'in' | 'out';
+  width: number;
+  height: number;
+  lines?: number;
+};
 
-export function ChatThreadSkeleton({rows = 6}: {rows?: number}) {
+/** Bolhas in/out com alturas variadas — mais próximas do thread real. */
+const THREAD_BUBBLES: ThreadBubbleSpec[] = [
+  {side: 'in', width: 168, height: 44},
+  {side: 'out', width: 210, height: 58, lines: 2},
+  {side: 'in', width: 132, height: 36},
+  {side: 'out', width: 186, height: 44},
+  {side: 'in', width: 244, height: 72, lines: 2},
+  {side: 'out', width: 154, height: 36},
+  {side: 'in', width: 198, height: 52},
+  {side: 'out', width: 226, height: 64, lines: 2},
+];
+
+export function ChatThreadSkeleton({rows = 8}: {rows?: number}) {
   const {colors: theme} = useTheme();
-  const pulse = usePulse(0.4, 0.75);
+  const pulse = usePulse(0.38, 0.72);
+  const bubbles = THREAD_BUBBLES.slice(0, Math.max(4, rows));
 
   return (
     <View style={[styles.thread, {backgroundColor: theme.pageBg}]}>
-      {Array.from({length: rows}).map((_, index) => {
-        const frac = THREAD_WIDTHS[index % THREAD_WIDTHS.length];
+      <View style={styles.threadTopSpacer} />
+      {bubbles.map((bubble, index) => {
+        const outgoing = bubble.side === 'out';
         return (
-          <Bone
+          <View
             key={index}
-            width={`${Math.round(frac * 100)}%`}
-            height={36}
-            radius={14}
-            color={theme.fill}
-            pulse={pulse}
-            style={styles.threadBone}
-          />
+            style={[
+              styles.threadRow,
+              outgoing ? styles.threadRowOut : styles.threadRowIn,
+            ]}>
+            <View
+              style={[
+                styles.threadBubble,
+                {
+                  width: bubble.width,
+                  minHeight: bubble.height,
+                  backgroundColor: outgoing ? theme.bubbleOut : theme.fill,
+                  borderBottomRightRadius: outgoing ? 6 : 18,
+                  borderBottomLeftRadius: outgoing ? 18 : 6,
+                },
+              ]}>
+              <Bone
+                width="78%"
+                height={11}
+                radius={5}
+                color={outgoing ? theme.bubbleOutMuted : theme.separator}
+                pulse={pulse}
+              />
+              {bubble.lines === 2 ? (
+                <Bone
+                  width="54%"
+                  height={11}
+                  radius={5}
+                  color={outgoing ? theme.bubbleOutMuted : theme.separator}
+                  pulse={pulse}
+                  style={styles.threadLineGap}
+                />
+              ) : null}
+              <Bone
+                width={28}
+                height={8}
+                radius={4}
+                color={outgoing ? theme.bubbleOutMuted : theme.separator}
+                pulse={pulse}
+                style={styles.threadTime}
+              />
+            </View>
+          </View>
         );
       })}
+      <View style={styles.threadBottomSpacer} />
+    </View>
+  );
+}
+
+/** Composer / ações do footer durante loading — mesmo box do MessageInput.shell. */
+export function ChatThreadFooterSkeleton() {
+  const {colors: theme} = useTheme();
+  const insets = useSafeAreaInsets();
+  const pulse = usePulse(0.4, 0.78);
+  const bottomPad = Math.max(insets.bottom, spacing.sm);
+
+  return (
+    <View
+      style={[
+        styles.footerShell,
+        {
+          backgroundColor: theme.pageBg,
+          paddingBottom: bottomPad,
+        },
+      ]}
+      pointerEvents="none">
+      <View style={styles.footerRow}>
+        <Bone
+          width={40}
+          height={40}
+          radius={20}
+          color={theme.fill}
+          pulse={pulse}
+        />
+        <View
+          style={[
+            styles.footerInput,
+            {
+              backgroundColor: theme.fill,
+              borderColor: theme.border,
+            },
+          ]}>
+          <Bone width="38%" height={12} radius={6} pulse={pulse} />
+        </View>
+        <Bone
+          width={40}
+          height={40}
+          radius={20}
+          color={theme.fill}
+          pulse={pulse}
+        />
+      </View>
     </View>
   );
 }
@@ -187,12 +289,63 @@ const styles = StyleSheet.create({
   },
   thread: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.md,
     gap: 10,
   },
-  threadBone: {
-    alignSelf: 'center',
+  threadTopSpacer: {
+    flexGrow: 1,
+    minHeight: spacing.lg,
+  },
+  threadBottomSpacer: {
+    height: spacing.sm,
+  },
+  threadRow: {
+    width: '100%',
+    flexDirection: 'row',
+  },
+  threadRowIn: {
+    justifyContent: 'flex-start',
+  },
+  threadRowOut: {
+    justifyContent: 'flex-end',
+  },
+  threadBubble: {
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 10,
+    gap: 0,
+  },
+  threadLineGap: {
+    marginTop: 8,
+  },
+  threadTime: {
+    alignSelf: 'flex-end',
+    marginTop: 10,
+  },
+  // Espelha MessageInput.shell (absolute bottom) para o cross-fade sem pulo
+  footerShell: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: 8,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 52,
+  },
+  footerInput: {
+    flex: 1,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
   },
 });

@@ -10,6 +10,7 @@ import {MessageSquarePlus, RefreshCw, UserPlus} from 'lucide-react-native';
 import {useTheme} from '../../contexts/ThemeContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
 import type {ChannelFeatures} from '../../utils/channelFeatures';
+import {ChatThreadFooterSkeleton} from '../Skeleton';
 
 export type ChatThreadFooterProps = {
   status?: string | null;
@@ -106,13 +107,7 @@ export function ChatThreadFooter(props: ChatThreadFooterProps) {
   const mode = getThreadFooterMode(props);
 
   if (footerLoading) {
-    return (
-      <View style={[styles.shell, {backgroundColor: theme.pageBg}]}>
-        <View style={[styles.loadingCard, {backgroundColor: theme.card, borderColor: theme.border}]}>
-          <ActivityIndicator color={brand.blue} />
-        </View>
-      </View>
-    );
+    return <ChatThreadFooterSkeleton />;
   }
 
   if (mode.showPendingFooter) {
@@ -292,13 +287,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.lg,
-  },
-  loadingCard: {
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    borderRadius: radii.lg,
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   card: {
     borderWidth: StyleSheet.hairlineWidth * 2,

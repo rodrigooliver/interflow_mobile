@@ -9,7 +9,10 @@ import {
   Alert,
   Keyboard,
   Modal,
+  Animated,
+  Easing,
   useWindowDimensions,
+  type CellRendererProps,
   type ListRenderItemInfo,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -53,7 +56,7 @@ import {
 } from '../../services/messageActions';
 import {usePermissions} from '../../hooks/usePermissions';
 import {supabase} from '../../lib/supabase';
-import {ChatThreadSkeleton} from '../../components/Skeleton';
+import {ChatThreadSkeleton, ChatThreadFooterSkeleton} from '../../components/Skeleton';
 import {FetchErrorState} from '../../components/FetchErrorState';
 import {
   MessageBubble,
@@ -100,7 +103,10 @@ import {
 import {downloadMessageMedia} from '../../services/downloadMedia';
 
 const PAGE_SIZE = 40;
-const NEAR_BOTTOM_THRESHOLD = 300;
+/** Distância para considerar “colado” no bottom (auto-follow / pin). */
+const AT_BOTTOM_THRESHOLD = 48;
+/** Distância para exibir o FAB de voltar ao bottom. */
+const SHOW_FAB_THRESHOLD = 220;
 
 type PinnedRow = {
   id: string;
@@ -175,8 +181,17 @@ export function ChatThreadScreen({
   const [actionBusy, setActionBusy] = useState(false);
   const [headerChromeHeight, setHeaderChromeHeight] = useState(72);
   const [stickyDateLabel, setStickyDateLabel] = useState<string | null>(null);
+  /** Lista só aparece depois de pinar no bottom — evita o “pulo” de abertura. */
+  const [listSettled, setListSettled] = useState(false);
+  /** Skeleton continua montado durante o cross-fade com a lista. */
+  const [revealOverlay, setRevealOverlay] = useState(true);
   const listRef = useRef<FlatList<MessageListRow>>(null);
   const nearBottomRef = useRef(true);
+  const atBottomRef = useRef(true);
+  const userDraggingRef = useRef(false);
+  const listSettledRef = useRef(false);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealProgress = useRef(new Animated.Value(0)).current;
   const listRowsRef = useRef<MessageListRow[]>([]);
   const rowHeightsRef = useRef<Map<string, number>>(new Map());
   const scrollYRef = useRef(0);
@@ -188,24 +203,118 @@ export function ChatThreadScreen({
   headerChromeHeightRef.current = headerChromeHeight;
   stickyDateLabelRef.current = stickyDateLabel;
 
-  const pinListToBottom = useCallback(() => {
-    if (!nearBottomRef.current) return;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        listRef.current?.scrollToOffset({offset: 0, animated: false});
-        setTimeout(() => {
-          listRef.current?.scrollToOffset({offset: 0, animated: false});
-        }, 32);
-      });
-    });
+  // Pad estável ≈ shell do MessageInput (inclui safe-area). Evita o skeleton
+  // “descer” quando o composer real reporta a altura.
+  const estimatedComposerPad =
+    COMPOSER_LIST_PAD + Math.max(insets.bottom - spacing.sm, 0);
+
+  // Só fade — translateY em lista inverted parece “pulo de scroll”
+  const listRevealStyle = useMemo(
+    () => ({
+      opacity: revealProgress.interpolate({
+        inputRange: [0, 0.4, 1],
+        outputRange: [0, 0.85, 1],
+      }),
+    }),
+    [revealProgress],
+  );
+
+  const skeletonFadeStyle = useMemo(
+    () => ({
+      opacity: revealProgress.interpolate({
+        inputRange: [0, 0.55, 1],
+        outputRange: [1, 0, 0],
+      }),
+    }),
+    [revealProgress],
+  );
+
+  /** Chip de data e tarjas entram junto com a lista. */
+  const chromeFadeStyle = useMemo(
+    () => ({
+      opacity: revealProgress.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [0, 0, 1],
+      }),
+    }),
+    [revealProgress],
+  );
+
+  const clearSettleTimer = useCallback(() => {
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
   }, []);
 
+  const resetListSettle = useCallback(() => {
+    clearSettleTimer();
+    listSettledRef.current = false;
+    setListSettled(false);
+    setRevealOverlay(true);
+    revealProgress.setValue(0);
+    nearBottomRef.current = true;
+    atBottomRef.current = true;
+    userDraggingRef.current = false;
+    setShowScrollFab(false);
+    setNewMessagesCount(0);
+  }, [clearSettleTimer, revealProgress]);
+
+  const scrollListToBottom = useCallback((animated: boolean) => {
+    listRef.current?.scrollToOffset({offset: 0, animated});
+  }, []);
+
+  /** Só pin automaticamente se o usuário está colado no bottom e não arrastando. */
+  const pinListToBottom = useCallback(() => {
+    if (userDraggingRef.current || !atBottomRef.current) return;
+    requestAnimationFrame(() => {
+      scrollListToBottom(false);
+    });
+  }, [scrollListToBottom]);
+
+  const finishListSettle = useCallback(() => {
+    if (listSettledRef.current) return;
+    clearSettleTimer();
+    // Pin sob o skeleton, espera 2 frames (layout/composer) e só então revela
+    scrollListToBottom(false);
+    requestAnimationFrame(() => {
+      scrollListToBottom(false);
+      requestAnimationFrame(() => {
+        if (listSettledRef.current) return;
+        scrollListToBottom(false);
+        listSettledRef.current = true;
+        atBottomRef.current = true;
+        nearBottomRef.current = true;
+        setListSettled(true);
+        Animated.timing(revealProgress, {
+          toValue: 1,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start(({finished}) => {
+          if (finished) setRevealOverlay(false);
+        });
+      });
+    });
+  }, [clearSettleTimer, revealProgress, scrollListToBottom]);
+
+  /** Espera composer medir + lista layoutar antes de revelar. */
+  const scheduleListSettle = useCallback(() => {
+    if (listSettledRef.current) return;
+    clearSettleTimer();
+    settleTimerRef.current = setTimeout(() => {
+      finishListSettle();
+    }, 120);
+  }, [clearSettleTimer, finishListSettle]);
+
   const scrollToBottom = useCallback(() => {
+    userDraggingRef.current = false;
+    atBottomRef.current = true;
     nearBottomRef.current = true;
     setShowScrollFab(false);
     setNewMessagesCount(0);
-    listRef.current?.scrollToOffset({offset: 0, animated: true});
-  }, []);
+    scrollListToBottom(true);
+  }, [scrollListToBottom]);
 
   useEffect(() => {
     const showEvent =
@@ -226,11 +335,12 @@ export function ChatThreadScreen({
     };
   }, [pinListToBottom]);
 
-  const listComposerPad = composerHeight;
+  // Pad sobe com a medição real ainda sob o skeleton (sem pulo visível)
+  const listComposerPad = Math.max(composerHeight, estimatedComposerPad);
   listComposerPadRef.current = listComposerPad;
 
   const handleComposerHeight = useCallback((height: number) => {
-    setComposerHeight(height);
+    setComposerHeight(prev => (prev === height ? prev : height));
   }, []);
 
   const syncStickyDate = useCallback(() => {
@@ -254,19 +364,74 @@ export function ChatThreadScreen({
       const y = e.nativeEvent.contentOffset.y;
       scrollYRef.current = y;
       syncStickyDate();
-      const near = y < NEAR_BOTTOM_THRESHOLD;
+      const atBottom = y <= AT_BOTTOM_THRESHOLD;
+      const near = y < SHOW_FAB_THRESHOLD;
+      atBottomRef.current = atBottom;
       nearBottomRef.current = near;
+      if (!listSettledRef.current) return;
       setShowScrollFab(!near);
-      if (near && newMessagesCount > 0) {
+      if (atBottom && newMessagesCount > 0) {
         setNewMessagesCount(0);
       }
     },
     [newMessagesCount, syncStickyDate],
   );
 
-  useEffect(() => {
+  const handleScrollBeginDrag = useCallback(() => {
+    userDraggingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = e.nativeEvent.contentOffset.y;
+      atBottomRef.current = y <= AT_BOTTOM_THRESHOLD;
+      nearBottomRef.current = y < SHOW_FAB_THRESHOLD;
+      // Se ainda há momentum, o fim real vem em onMomentumScrollEnd
+      if (e.nativeEvent.velocity && Math.abs(e.nativeEvent.velocity.y) > 0.05) {
+        return;
+      }
+      userDraggingRef.current = false;
+    },
+    [],
+  );
+
+  const handleMomentumScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = e.nativeEvent.contentOffset.y;
+      atBottomRef.current = y <= AT_BOTTOM_THRESHOLD;
+      nearBottomRef.current = y < SHOW_FAB_THRESHOLD;
+      userDraggingRef.current = false;
+    },
+    [],
+  );
+
+  const handleListContentSizeChange = useCallback(() => {
+    if (!listSettledRef.current) {
+      scheduleListSettle();
+      return;
+    }
+    // Não puxar de volta enquanto o usuário rola — só seguir se estiver colado
     pinListToBottom();
-  }, [keyboardHeight, listComposerPad, pinListToBottom]);
+  }, [pinListToBottom, scheduleListSettle]);
+
+  // Durante abertura: reagendar settle quando dados/pad mudam
+  useEffect(() => {
+    if (listSettledRef.current) return;
+    if (!loading && messages.length > 0) {
+      scheduleListSettle();
+    }
+  }, [loading, messages.length, listComposerPad, scheduleListSettle]);
+
+  // Teclado: re-pin. Pad do composer só após revelar (antes o skeleton cobre).
+  useEffect(() => {
+    if (!listSettledRef.current) return;
+    pinListToBottom();
+  }, [keyboardHeight, pinListToBottom]);
+
+  useEffect(() => {
+    if (!listSettledRef.current || revealOverlay) return;
+    pinListToBottom();
+  }, [listComposerPad, revealOverlay, pinListToBottom]);
 
   const bubbleTheme: BubbleTheme = useMemo(
     () => ({
@@ -351,7 +516,8 @@ export function ChatThreadScreen({
     setPinned([]);
     setScheduled([]);
     setHasMoreOlder(true);
-    setNewMessagesCount(0);
+    setComposerHeight(COMPOSER_LIST_PAD);
+    resetListSettle();
     try {
       const result = await fetchChatThreadBootstrap(chatId, orgId, PAGE_SIZE);
       setMessages(result.messages.filter(m => !isHiddenFromChatThread(m)));
@@ -379,7 +545,7 @@ export function ChatThreadScreen({
       setHeaderLoading(false);
       setFooterLoading(false);
     }
-  }, [chatId, orgId, title, loadCollaborators]);
+  }, [chatId, orgId, title, loadCollaborators, resetListSettle]);
 
   const loadOlder = useCallback(async () => {
     if (!orgId || loadingOlderRef.current || !hasMoreOlder) return;
@@ -433,7 +599,7 @@ export function ChatThreadScreen({
               if (prev.some(m => m.id === msg.id)) return prev;
               return [msg, ...prev];
             });
-            if (!nearBottomRef.current) {
+            if (!atBottomRef.current) {
               setNewMessagesCount(c => c + 1);
               setShowScrollFab(true);
             } else {
@@ -856,16 +1022,45 @@ export function ChatThreadScreen({
     setStickyDateLabel(null);
     rowHeightsRef.current.clear();
     scrollYRef.current = 0;
-  }, [chatId]);
+    resetListSettle();
+  }, [chatId, resetListSettle]);
 
   useEffect(() => {
+    if (loading || fetchError) return;
+    if (messages.length === 0) {
+      listSettledRef.current = true;
+      setListSettled(true);
+      setRevealOverlay(false);
+      revealProgress.setValue(1);
+      return;
+    }
+    if (listSettledRef.current) return;
+    scheduleListSettle();
+    // Failsafe: não ficar no skeleton se contentSize não disparar
+    const failsafe = setTimeout(() => finishListSettle(), 220);
+    return () => clearTimeout(failsafe);
+  }, [
+    loading,
+    fetchError,
+    messages.length,
+    chatId,
+    refreshKey,
+    scheduleListSettle,
+    finishListSettle,
+    revealProgress,
+  ]);
+
+  useEffect(() => {
+    if (!listSettled) return;
     syncStickyDate();
     if (stickyDateLabelRef.current || !messages[0]) return;
     const fallback = formatMessageDayLabel(messages[0].created_at, dateLabels);
     if (!fallback) return;
     stickyDateLabelRef.current = fallback;
     setStickyDateLabel(fallback);
-  }, [listRows, headerChromeHeight, listComposerPad, syncStickyDate, messages, dateLabels]);
+  }, [listRows, headerChromeHeight, listComposerPad, syncStickyDate, messages, dateLabels, listSettled]);
+
+  useEffect(() => () => clearSettleTimer(), [clearSettleTimer]);
 
   const renderItem = useCallback(
     ({item, index}: ListRenderItemInfo<MessageListRow>) => {
@@ -899,20 +1094,7 @@ export function ChatThreadScreen({
   const keyExtractor = useCallback((item: MessageListRow) => item.id, []);
 
   const renderListCell = useCallback(
-    ({
-      children,
-      style,
-      onLayout,
-      item,
-    }: {
-      children?: React.ReactNode;
-      style?: object;
-      onLayout?: (event: {
-        nativeEvent: {layout: {height: number}};
-      }) => void;
-      item: MessageListRow;
-      index: number;
-    }) => (
+    ({children, style, onLayout, item}: CellRendererProps<MessageListRow>) => (
       <View
         style={style}
         onLayout={e => {
@@ -1006,12 +1188,16 @@ export function ChatThreadScreen({
       </View>
 
       {/* Sticker de data sticky (Hoje / Ontem / …) — abaixo do header */}
-      {stickyDateLabel ? (
-        <View
-          style={[styles.stickyDate, {top: headerChromeHeight}]}
+      {stickyDateLabel && listSettled ? (
+        <Animated.View
+          style={[
+            styles.stickyDate,
+            chromeFadeStyle,
+            {top: headerChromeHeight},
+          ]}
           pointerEvents="none">
           <DateSeparator label={stickyDateLabel} floating />
-        </View>
+        </Animated.View>
       ) : null}
 
       {/* Header flutuante com blur — sobrepõe a lista (paridade web) */}
@@ -1061,8 +1247,13 @@ export function ChatThreadScreen({
       </View>
 
       <View style={styles.flex}>
-        {!loading && !fetchError ? (
-          <View style={[styles.stripsBelowHeader, {top: headerChromeHeight}]}>
+        {!loading && !fetchError && listSettled ? (
+          <Animated.View
+            style={[
+              styles.stripsBelowHeader,
+              chromeFadeStyle,
+              {top: headerChromeHeight},
+            ]}>
             <PinnedMessagesStrip
               pinned={pinned}
               expanded={pinnedExpanded}
@@ -1078,11 +1269,16 @@ export function ChatThreadScreen({
               scheduled={scheduled}
               onCancel={handleCancelScheduled}
             />
-          </View>
+          </Animated.View>
         ) : null}
 
         {loading || !orgId ? (
-          <View style={{paddingTop: headerChromeHeight, flex: 1}}>
+          <View
+            style={{
+              paddingTop: headerChromeHeight,
+              paddingBottom: listComposerPad,
+              flex: 1,
+            }}>
             <ChatThreadSkeleton />
           </View>
         ) : fetchError ? (
@@ -1103,51 +1299,80 @@ export function ChatThreadScreen({
                 </Text>
               </View>
             ) : (
-              <FlatList
-                ref={listRef}
-                data={listRows}
-                keyExtractor={keyExtractor}
-                renderItem={renderItem}
-                CellRendererComponent={renderListCell}
-                inverted
-                contentContainerStyle={[
-                  styles.listContent,
-                  {
-                    // inverted: paddingTop = baixo (composer); paddingBottom = topo (header + sticky date)
-                    paddingTop: listComposerPad,
-                    paddingBottom:
-                      headerChromeHeight + STICKY_DATE_SLOT + spacing.sm,
-                  },
-                ]}
-                onLayout={e => {
-                  const h = e.nativeEvent.layout.height;
-                  if (h > 0 && h !== listHeightRef.current) {
-                    listHeightRef.current = h;
-                    syncStickyDate();
-                  }
-                }}
-                onScroll={handleListScroll}
-                scrollEventThrottle={16}
-                onEndReached={loadOlder}
-                onEndReachedThreshold={0.2}
-                ListFooterComponent={listFooter}
-                ListFooterComponentStyle={styles.loadOlderFooter}
-                initialNumToRender={16}
-                maxToRenderPerBatch={10}
-                windowSize={7}
-                updateCellsBatchingPeriod={50}
-                removeClippedSubviews={Platform.OS === 'android'}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="interactive"
-                maintainVisibleContentPosition={
-                  Platform.OS === 'ios' && keyboardHeight === 0
-                    ? {minIndexForVisible: 1}
-                    : undefined
-                }
-              />
+              <View style={styles.flex}>
+                <Animated.View style={[styles.flex, listRevealStyle]}>
+                  <FlatList
+                    ref={listRef}
+                    data={listRows}
+                    keyExtractor={keyExtractor}
+                    renderItem={renderItem}
+                    CellRendererComponent={renderListCell}
+                    inverted
+                    contentContainerStyle={[
+                      styles.listContent,
+                      {
+                        // inverted: paddingTop = baixo (composer); paddingBottom = topo (header + sticky date)
+                        paddingTop: listComposerPad,
+                        paddingBottom:
+                          headerChromeHeight + STICKY_DATE_SLOT + spacing.sm,
+                      },
+                    ]}
+                    onLayout={e => {
+                      const h = e.nativeEvent.layout.height;
+                      if (h > 0 && h !== listHeightRef.current) {
+                        listHeightRef.current = h;
+                        if (listSettledRef.current) {
+                          syncStickyDate();
+                        } else {
+                          scheduleListSettle();
+                        }
+                      }
+                    }}
+                    onContentSizeChange={handleListContentSizeChange}
+                    onScroll={handleListScroll}
+                    onScrollBeginDrag={handleScrollBeginDrag}
+                    onScrollEndDrag={handleScrollEndDrag}
+                    onMomentumScrollEnd={handleMomentumScrollEnd}
+                    scrollEventThrottle={16}
+                    onEndReached={listSettled ? loadOlder : undefined}
+                    onEndReachedThreshold={0.2}
+                    ListFooterComponent={listFooter}
+                    ListFooterComponentStyle={styles.loadOlderFooter}
+                    initialNumToRender={16}
+                    maxToRenderPerBatch={10}
+                    windowSize={7}
+                    updateCellsBatchingPeriod={50}
+                    removeClippedSubviews={Platform.OS === 'android'}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="interactive"
+                    maintainVisibleContentPosition={
+                      Platform.OS === 'ios' &&
+                      keyboardHeight === 0 &&
+                      listSettled
+                        ? {minIndexForVisible: 0}
+                        : undefined
+                    }
+                  />
+                </Animated.View>
+                {revealOverlay ? (
+                  <Animated.View
+                    style={[
+                      styles.listSettleOverlay,
+                      skeletonFadeStyle,
+                      {
+                        paddingTop: headerChromeHeight,
+                        paddingBottom: listComposerPad,
+                        backgroundColor: theme.pageBg,
+                      },
+                    ]}
+                    pointerEvents="none">
+                    <ChatThreadSkeleton />
+                  </Animated.View>
+                ) : null}
+              </View>
             )}
             <ScrollToBottomFab
-              visible={showScrollFab}
+              visible={showScrollFab && listSettled}
               newCount={newMessagesCount}
               bottomOffset={listComposerPad + spacing.sm}
               onPress={scrollToBottom}
@@ -1155,45 +1380,72 @@ export function ChatThreadScreen({
           </View>
         )}
 
-        {fetchError || !orgId || loading ? null : (
-          <View style={styles.composerLayer} pointerEvents="box-none">
-            <ChatThreadFooter
-              status={chatMeta?.status}
-              canSendMessage={messageWindow.canSendMessage}
-              canInteract={canInteract}
-              canSendAsCollaborator={canSendAsCollaborator}
-              isGroupChat={isGroupChat}
-              channelFeatures={channelFeatures}
-              footerLoading={footerLoading}
-              canBecomeCollaborator={chatsPermissions.canBecomeCollaborator}
-              isOwnerOrAdmin={isOwnerOrAdmin}
-              attending={actionBusy}
-              joining={actionBusy}
-              reopening={actionBusy}
-              onAttend={() => void handleAttend()}
-              onJoin={() => void handleJoin()}
-              onTransferToMe={() => void handleAttend()}
-              onOpenTemplate={() => setTemplateOpen(true)}
-              onReopen={() => void handleReopen()}>
-              {showInput ? (
-                <MessageInput
-                  chatId={chatId}
-                  organizationId={orgId}
+        {/*
+          Input real fica estático (opacity 1) sob o skeleton.
+          Só o skeleton dissolve — fade-in do input causava o pulo visual.
+        */}
+        {fetchError || !orgId ? null : (
+          <View
+            style={styles.composerLayer}
+            pointerEvents={
+              loading || footerLoading || revealOverlay ? 'none' : 'box-none'
+            }>
+            {!loading && !footerLoading ? (
+              <View pointerEvents={revealOverlay ? 'none' : 'box-none'}>
+                <ChatThreadFooter
+                  status={chatMeta?.status}
+                  canSendMessage={messageWindow.canSendMessage}
+                  canInteract={canInteract}
+                  canSendAsCollaborator={canSendAsCollaborator}
+                  isGroupChat={isGroupChat}
                   channelFeatures={channelFeatures}
-                  replyTo={replyTo}
-                  onClearReply={() => setReplyTo(null)}
-                  onSent={handleComposerSent}
-                  keyboardHeight={keyboardHeight}
-                  onHeightChange={handleComposerHeight}
-                  variableContext={{
-                    customerName: chatMeta?.customer?.name,
-                    customerFirstName: chatMeta?.customer?.name?.split(' ')[0],
-                    chatStatus: chatMeta?.status,
-                    ticketNumber: chatMeta?.ticket_number as string | undefined,
-                  }}
-                />
-              ) : null}
-            </ChatThreadFooter>
+                  footerLoading={false}
+                  canBecomeCollaborator={
+                    chatsPermissions.canBecomeCollaborator
+                  }
+                  isOwnerOrAdmin={isOwnerOrAdmin}
+                  attending={actionBusy}
+                  joining={actionBusy}
+                  reopening={actionBusy}
+                  onAttend={() => void handleAttend()}
+                  onJoin={() => void handleJoin()}
+                  onTransferToMe={() => void handleAttend()}
+                  onOpenTemplate={() => setTemplateOpen(true)}
+                  onReopen={() => void handleReopen()}>
+                  {showInput ? (
+                    <MessageInput
+                      chatId={chatId}
+                      organizationId={orgId}
+                      channelFeatures={channelFeatures}
+                      replyTo={replyTo}
+                      onClearReply={() => setReplyTo(null)}
+                      onSent={handleComposerSent}
+                      keyboardHeight={keyboardHeight}
+                      onHeightChange={handleComposerHeight}
+                      variableContext={{
+                        customerName: chatMeta?.customer?.name,
+                        customerFirstName:
+                          chatMeta?.customer?.name?.split(' ')[0],
+                        chatStatus: chatMeta?.status,
+                        ticketNumber: chatMeta?.ticket_number as
+                          | string
+                          | undefined,
+                      }}
+                    />
+                  ) : null}
+                </ChatThreadFooter>
+              </View>
+            ) : null}
+            {loading || footerLoading || revealOverlay ? (
+              <Animated.View
+                style={[
+                  styles.footerSkeletonLayer,
+                  loading || footerLoading ? undefined : skeletonFadeStyle,
+                ]}
+                pointerEvents="none">
+                <ChatThreadFooterSkeleton />
+              </Animated.View>
+            ) : null}
           </View>
         )}
       </View>
@@ -1337,8 +1589,18 @@ const styles = StyleSheet.create({
     zIndex: 15,
   },
   composerLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 25,
     elevation: 25,
+  },
+  footerSkeletonLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   floatingHeader: {
     position: 'absolute',
@@ -1364,6 +1626,10 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+  },
+  listSettleOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
   },
   emptyThread: {
     flex: 1,
