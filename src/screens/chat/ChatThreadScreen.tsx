@@ -157,7 +157,6 @@ export function ChatThreadScreen({
   const [threadTitle, setThreadTitle] = useState<string | undefined>(title);
   const [loading, setLoading] = useState(true);
   const [headerLoading, setHeaderLoading] = useState(true);
-  const [footerLoading, setFooterLoading] = useState(true);
   const [fetchError, setFetchError] = useState<FetchErrorKind | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
@@ -183,10 +182,9 @@ export function ChatThreadScreen({
   const [stickyDateLabel, setStickyDateLabel] = useState<string | null>(null);
   /** Lista só aparece depois de pinar no bottom — evita o “pulo” de abertura. */
   const [listSettled, setListSettled] = useState(false);
-  /** Skeleton continua montado durante o cross-fade com a lista. */
+  /** Skeleton montado até o cross-fade terminar. */
   const [revealOverlay, setRevealOverlay] = useState(true);
   const listRef = useRef<FlatList<MessageListRow>>(null);
-  const nearBottomRef = useRef(true);
   const atBottomRef = useRef(true);
   const userDraggingRef = useRef(false);
   const listSettledRef = useRef(false);
@@ -203,38 +201,19 @@ export function ChatThreadScreen({
   headerChromeHeightRef.current = headerChromeHeight;
   stickyDateLabelRef.current = stickyDateLabel;
 
-  // Pad estável ≈ shell do MessageInput (inclui safe-area). Evita o skeleton
-  // “descer” quando o composer real reporta a altura.
+  // Pad mín. ≈ MessageInput + safe-area (lista/skeleton não “afundam” ao medir)
   const estimatedComposerPad =
     COMPOSER_LIST_PAD + Math.max(insets.bottom - spacing.sm, 0);
 
-  // Só fade — translateY em lista inverted parece “pulo de scroll”
   const listRevealStyle = useMemo(
-    () => ({
-      opacity: revealProgress.interpolate({
-        inputRange: [0, 0.4, 1],
-        outputRange: [0, 0.85, 1],
-      }),
-    }),
+    () => ({opacity: revealProgress}),
     [revealProgress],
   );
-
   const skeletonFadeStyle = useMemo(
     () => ({
       opacity: revealProgress.interpolate({
-        inputRange: [0, 0.55, 1],
-        outputRange: [1, 0, 0],
-      }),
-    }),
-    [revealProgress],
-  );
-
-  /** Chip de data e tarjas entram junto com a lista. */
-  const chromeFadeStyle = useMemo(
-    () => ({
-      opacity: revealProgress.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [0, 0, 1],
+        inputRange: [0, 1],
+        outputRange: [1, 0],
       }),
     }),
     [revealProgress],
@@ -253,7 +232,6 @@ export function ChatThreadScreen({
     setListSettled(false);
     setRevealOverlay(true);
     revealProgress.setValue(0);
-    nearBottomRef.current = true;
     atBottomRef.current = true;
     userDraggingRef.current = false;
     setShowScrollFab(false);
@@ -264,7 +242,7 @@ export function ChatThreadScreen({
     listRef.current?.scrollToOffset({offset: 0, animated});
   }, []);
 
-  /** Só pin automaticamente se o usuário está colado no bottom e não arrastando. */
+  /** Auto-follow só se colado no bottom e sem arraste. */
   const pinListToBottom = useCallback(() => {
     if (userDraggingRef.current || !atBottomRef.current) return;
     requestAnimationFrame(() => {
@@ -275,30 +253,24 @@ export function ChatThreadScreen({
   const finishListSettle = useCallback(() => {
     if (listSettledRef.current) return;
     clearSettleTimer();
-    // Pin sob o skeleton, espera 2 frames (layout/composer) e só então revela
     scrollListToBottom(false);
     requestAnimationFrame(() => {
+      if (listSettledRef.current) return;
       scrollListToBottom(false);
-      requestAnimationFrame(() => {
-        if (listSettledRef.current) return;
-        scrollListToBottom(false);
-        listSettledRef.current = true;
-        atBottomRef.current = true;
-        nearBottomRef.current = true;
-        setListSettled(true);
-        Animated.timing(revealProgress, {
-          toValue: 1,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start(({finished}) => {
-          if (finished) setRevealOverlay(false);
-        });
+      listSettledRef.current = true;
+      atBottomRef.current = true;
+      setListSettled(true);
+      Animated.timing(revealProgress, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({finished}) => {
+        if (finished) setRevealOverlay(false);
       });
     });
   }, [clearSettleTimer, revealProgress, scrollListToBottom]);
 
-  /** Espera composer medir + lista layoutar antes de revelar. */
   const scheduleListSettle = useCallback(() => {
     if (listSettledRef.current) return;
     clearSettleTimer();
@@ -310,7 +282,6 @@ export function ChatThreadScreen({
   const scrollToBottom = useCallback(() => {
     userDraggingRef.current = false;
     atBottomRef.current = true;
-    nearBottomRef.current = true;
     setShowScrollFab(false);
     setNewMessagesCount(0);
     scrollListToBottom(true);
@@ -335,12 +306,11 @@ export function ChatThreadScreen({
     };
   }, [pinListToBottom]);
 
-  // Pad sobe com a medição real ainda sob o skeleton (sem pulo visível)
   const listComposerPad = Math.max(composerHeight, estimatedComposerPad);
   listComposerPadRef.current = listComposerPad;
 
   const handleComposerHeight = useCallback((height: number) => {
-    setComposerHeight(prev => (prev === height ? prev : height));
+    setComposerHeight(height);
   }, []);
 
   const syncStickyDate = useCallback(() => {
@@ -365,11 +335,9 @@ export function ChatThreadScreen({
       scrollYRef.current = y;
       syncStickyDate();
       const atBottom = y <= AT_BOTTOM_THRESHOLD;
-      const near = y < SHOW_FAB_THRESHOLD;
       atBottomRef.current = atBottom;
-      nearBottomRef.current = near;
       if (!listSettledRef.current) return;
-      setShowScrollFab(!near);
+      setShowScrollFab(y >= SHOW_FAB_THRESHOLD);
       if (atBottom && newMessagesCount > 0) {
         setNewMessagesCount(0);
       }
@@ -385,8 +353,6 @@ export function ChatThreadScreen({
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const y = e.nativeEvent.contentOffset.y;
       atBottomRef.current = y <= AT_BOTTOM_THRESHOLD;
-      nearBottomRef.current = y < SHOW_FAB_THRESHOLD;
-      // Se ainda há momentum, o fim real vem em onMomentumScrollEnd
       if (e.nativeEvent.velocity && Math.abs(e.nativeEvent.velocity.y) > 0.05) {
         return;
       }
@@ -397,9 +363,7 @@ export function ChatThreadScreen({
 
   const handleMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const y = e.nativeEvent.contentOffset.y;
-      atBottomRef.current = y <= AT_BOTTOM_THRESHOLD;
-      nearBottomRef.current = y < SHOW_FAB_THRESHOLD;
+      atBottomRef.current = e.nativeEvent.contentOffset.y <= AT_BOTTOM_THRESHOLD;
       userDraggingRef.current = false;
     },
     [],
@@ -410,28 +374,14 @@ export function ChatThreadScreen({
       scheduleListSettle();
       return;
     }
-    // Não puxar de volta enquanto o usuário rola — só seguir se estiver colado
     pinListToBottom();
   }, [pinListToBottom, scheduleListSettle]);
 
-  // Durante abertura: reagendar settle quando dados/pad mudam
-  useEffect(() => {
-    if (listSettledRef.current) return;
-    if (!loading && messages.length > 0) {
-      scheduleListSettle();
-    }
-  }, [loading, messages.length, listComposerPad, scheduleListSettle]);
-
-  // Teclado: re-pin. Pad do composer só após revelar (antes o skeleton cobre).
-  useEffect(() => {
-    if (!listSettledRef.current) return;
-    pinListToBottom();
-  }, [keyboardHeight, pinListToBottom]);
-
+  // Após revelar: teclado / pad do composer re-pinam se ainda no bottom
   useEffect(() => {
     if (!listSettledRef.current || revealOverlay) return;
     pinListToBottom();
-  }, [listComposerPad, revealOverlay, pinListToBottom]);
+  }, [keyboardHeight, listComposerPad, revealOverlay, pinListToBottom]);
 
   const bubbleTheme: BubbleTheme = useMemo(
     () => ({
@@ -505,12 +455,10 @@ export function ChatThreadScreen({
     if (!orgId) {
       setLoading(true);
       setHeaderLoading(true);
-      setFooterLoading(true);
       return;
     }
     setLoading(true);
     setHeaderLoading(true);
-    setFooterLoading(true);
     setFetchError(null);
     setMessages([]);
     setPinned([]);
@@ -543,7 +491,6 @@ export function ChatThreadScreen({
     } finally {
       setLoading(false);
       setHeaderLoading(false);
-      setFooterLoading(false);
     }
   }, [chatId, orgId, title, loadCollaborators, resetListSettle]);
 
@@ -1036,13 +983,14 @@ export function ChatThreadScreen({
     }
     if (listSettledRef.current) return;
     scheduleListSettle();
-    // Failsafe: não ficar no skeleton se contentSize não disparar
-    const failsafe = setTimeout(() => finishListSettle(), 220);
+    // Failsafe se contentSize/onLayout não dispararem
+    const failsafe = setTimeout(() => finishListSettle(), 280);
     return () => clearTimeout(failsafe);
   }, [
     loading,
     fetchError,
     messages.length,
+    listComposerPad,
     chatId,
     refreshKey,
     scheduleListSettle,
@@ -1192,7 +1140,7 @@ export function ChatThreadScreen({
         <Animated.View
           style={[
             styles.stickyDate,
-            chromeFadeStyle,
+            listRevealStyle,
             {top: headerChromeHeight},
           ]}
           pointerEvents="none">
@@ -1251,7 +1199,7 @@ export function ChatThreadScreen({
           <Animated.View
             style={[
               styles.stripsBelowHeader,
-              chromeFadeStyle,
+              listRevealStyle,
               {top: headerChromeHeight},
             ]}>
             <PinnedMessagesStrip
@@ -1335,7 +1283,8 @@ export function ChatThreadScreen({
                     onMomentumScrollEnd={handleMomentumScrollEnd}
                     scrollEventThrottle={16}
                     onEndReached={listSettled ? loadOlder : undefined}
-                    onEndReachedThreshold={0.2}
+                    // ~metade da viewport antes do topo (lista inverted)
+                    onEndReachedThreshold={0.55}
                     ListFooterComponent={listFooter}
                     ListFooterComponentStyle={styles.loadOlderFooter}
                     initialNumToRender={16}
@@ -1388,9 +1337,9 @@ export function ChatThreadScreen({
           <View
             style={styles.composerLayer}
             pointerEvents={
-              loading || footerLoading || revealOverlay ? 'none' : 'box-none'
+              loading || revealOverlay ? 'none' : 'box-none'
             }>
-            {!loading && !footerLoading ? (
+            {!loading ? (
               <View pointerEvents={revealOverlay ? 'none' : 'box-none'}>
                 <ChatThreadFooter
                   status={chatMeta?.status}
@@ -1399,7 +1348,6 @@ export function ChatThreadScreen({
                   canSendAsCollaborator={canSendAsCollaborator}
                   isGroupChat={isGroupChat}
                   channelFeatures={channelFeatures}
-                  footerLoading={false}
                   canBecomeCollaborator={
                     chatsPermissions.canBecomeCollaborator
                   }
@@ -1436,11 +1384,11 @@ export function ChatThreadScreen({
                 </ChatThreadFooter>
               </View>
             ) : null}
-            {loading || footerLoading || revealOverlay ? (
+            {loading || revealOverlay ? (
               <Animated.View
                 style={[
                   styles.footerSkeletonLayer,
-                  loading || footerLoading ? undefined : skeletonFadeStyle,
+                  loading ? undefined : skeletonFadeStyle,
                 ]}
                 pointerEvents="none">
                 <ChatThreadFooterSkeleton />

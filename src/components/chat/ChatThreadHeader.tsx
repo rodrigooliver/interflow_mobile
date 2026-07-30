@@ -267,14 +267,7 @@ export function ChatThreadHeader({
                 )
               ) : null}
 
-              {headerLoading ? (
-                <View
-                  style={[
-                    styles.actionSkeleton,
-                    {backgroundColor: theme.fill},
-                  ]}
-                />
-              ) : onMore ? (
+              {onMore ? (
                 <TouchableOpacity
                   onPress={onMore}
                   style={styles.iconBtn}
