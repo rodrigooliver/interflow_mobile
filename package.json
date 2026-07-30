@@ -39,6 +39,7 @@
     "react-native-status-bar-height": "^2.6.0",
     "react-native-svg": "^15.15.5",
     "react-native-url-polyfill": "^4.0.0",
+    "react-native-video": "^6.14.0",
     "react-native-webview": "^13.16.0",
     "rn-emoji-keyboard": "^1.7.0"
   },

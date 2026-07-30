@@ -84,10 +84,32 @@ export const SYSTEM_EVENT_TYPES = new Set([
   'task',
 ]);
 
-export function isOutgoing(msg: ChatMessage): boolean {
+export type MessageSideContext = {
+  chatType?: string | null;
+  currentUserId?: string | null;
+};
+
+/**
+ * Lado da bolha — espelha getMessageSideForChat da web.
+ * Em chat interno: só as minhas mensagens à direita.
+ */
+export function isOutgoing(
+  msg: ChatMessage,
+  ctx?: MessageSideContext,
+): boolean {
   const type = msg.type || '';
   const isSystemContentType =
     msg.sender_type === 'system' && type === 'template';
+  const chatType = ctx?.chatType;
+
+  if (chatType === 'internal_group' || chatType === 'internal_direct') {
+    return (
+      msg.sender_type === 'agent' &&
+      !!ctx?.currentUserId &&
+      msg.sender_agent_id === ctx.currentUserId
+    );
+  }
+
   return msg.sender_type === 'agent' || isSystemContentType;
 }
 
@@ -135,7 +157,11 @@ export function isImageAttachment(att: MessageAttachment): boolean {
 }
 
 export function isVideoAttachment(att: MessageAttachment): boolean {
-  return attachmentMime(att).startsWith('video');
+  const mime = attachmentMime(att);
+  if (mime.startsWith('video')) return true;
+  // Fallback por extensão (anexos às vezes vêm como document sem mime video/*)
+  const name = `${att.name || ''} ${att.file_name || ''} ${att.url || ''}`.toLowerCase();
+  return /\.(mp4|mov|m4v|webm|mkv|3gp|avi)(\?|$)/i.test(name);
 }
 
 export function isAudioAttachment(att: MessageAttachment): boolean {

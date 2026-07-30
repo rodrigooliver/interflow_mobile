@@ -48,6 +48,8 @@ type Props = {
   bubbleTheme: BubbleTheme;
   channelFeatures: ChannelFeatures;
   chatStatus?: string | null;
+  chatType?: string | null;
+  currentUserId?: string | null;
   reacting?: boolean;
   onClose: () => void;
   onReply: (message: ChatMessage) => void;
@@ -82,6 +84,8 @@ export function MessageActionSheet({
   bubbleTheme,
   channelFeatures,
   chatStatus,
+  chatType,
+  currentUserId,
   reacting,
   onClose,
   onReply,
@@ -107,6 +111,10 @@ export function MessageActionSheet({
   const closingRef = useRef(false);
   const displayMessage = message;
   const displayAnchor = anchor;
+  const sideCtx = useMemo(
+    () => ({chatType, currentUserId}),
+    [chatType, currentUserId],
+  );
 
   const capabilities = useMemo(() => {
     if (!displayMessage) {
@@ -194,7 +202,7 @@ export function MessageActionSheet({
       width: 220,
       height: 60,
     };
-    const out = displayMessage ? isOutgoing(displayMessage) : false;
+    const out = displayMessage ? isOutgoing(displayMessage, sideCtx) : false;
 
     const menuH = capabilities.actionCount * MENU_ROW_H;
     const reactH = capabilities.canReact ? REACTION_H : 0;
@@ -256,7 +264,7 @@ export function MessageActionSheet({
           ? {left: reactionLeft, top: reactionsTop, width: reactionW}
           : null,
     };
-  }, [displayAnchor, displayMessage, capabilities, winW, winH]);
+  }, [displayAnchor, displayMessage, capabilities, winW, winH, sideCtx]);
 
   const dismiss = useCallback(
     (after?: (msg: ChatMessage) => void) => {
@@ -365,7 +373,13 @@ export function MessageActionSheet({
               transform: [{scale: pop}],
             },
           ]}>
-          <MessageBubble item={displayMessage} theme={bubbleTheme} pinned />
+          <MessageBubble
+            item={displayMessage}
+            theme={bubbleTheme}
+            pinned
+            chatType={chatType}
+            currentUserId={currentUserId}
+          />
         </Animated.View>
 
         {capabilities.canReact && layout.reactions ? (

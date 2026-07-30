@@ -27,7 +27,7 @@ import {hapticLongPress, hapticSelection} from '../../utils/haptics';
 import {
   FileText,
   MapPin,
-  Video,
+  Play,
   User,
   Phone,
   Tag,
@@ -55,6 +55,7 @@ import type {ChatMessage} from '../../services/chatsApi';
 import {MarkdownText} from '../MarkdownText';
 import {MessageStatusTicks} from '../MessageStatusTicks';
 import {ImageViewerModal} from './ImageViewerModal';
+import {VideoPreviewModal} from './VideoPreviewModal';
 import {ChatAudioPlayer} from './ChatAudioPlayer';
 import {WhatsAppAdMessage} from './WhatsAppAdMessage';
 import {EmailPreviewModal} from './EmailPreviewModal';
@@ -113,6 +114,10 @@ type Props = {
    * No inverted, o gap de troca de lado vai na ÚLTIMA msg do grupo antigo.
    */
   spacingAfter?: number;
+  /** Tipo do chat — interno: lado baseado no usuário logado */
+  chatType?: string | null;
+  /** user_id do usuário logado (para chats internos) */
+  currentUserId?: string | null;
   onLongPress?: (message: ChatMessage, anchor: MessageAnchor) => void;
 };
 
@@ -264,6 +269,92 @@ function ImageAttachmentPreview({
       <ImageViewerModal
         visible={viewerOpen}
         uri={url}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
+function VideoAttachmentPreview({
+  url,
+  posterUrl,
+  fileName,
+  out,
+  width,
+  height,
+}: {
+  url: string;
+  posterUrl?: string | null;
+  fileName?: string | null;
+  out?: boolean;
+  width?: number | null;
+  height?: number | null;
+}) {
+  const {width: windowWidth} = useWindowDimensions();
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const hasKnownSize =
+    typeof width === 'number' &&
+    width > 0 &&
+    typeof height === 'number' &&
+    height > 0;
+
+  const bubbleInnerMax = Math.max(
+    120,
+    Math.floor(windowWidth * 0.78) - 6,
+  );
+  const maxSide = Math.min(CHAT_MEDIA_MAX_WIDTH, bubbleInnerMax);
+  // Placeholder 16:9 em px reais (getConstrainedMediaSize não amplia — 16x9 ficava invisível).
+  const displaySize = hasKnownSize
+    ? getConstrainedMediaSize(width!, height!, maxSide, maxSide)
+    : getConstrainedMediaSize(320, 180, maxSide, maxSide);
+
+  const thumb = posterUrl && posterUrl !== url ? posterUrl : null;
+
+  return (
+    <>
+      <MediaPressable
+        onPress={() => setViewerOpen(true)}
+        accessibilityRole="imagebutton"
+        style={[
+          out ? styles.mediaOutClip : styles.mediaInClip,
+          styles.videoPreview,
+          {
+            width: displaySize.width,
+            height: displaySize.height,
+            maxWidth: '100%',
+          },
+        ]}>
+        {thumb ? (
+          <Image
+            source={{uri: thumb}}
+            style={[
+              StyleSheet.absoluteFillObject,
+              styles.media,
+              out ? styles.mediaOut : styles.mediaIn,
+            ]}
+            resizeMode="cover"
+          />
+        ) : (
+          <View
+            style={[
+              StyleSheet.absoluteFillObject,
+              styles.videoPosterFallback,
+              styles.media,
+              out ? styles.mediaOut : styles.mediaIn,
+            ]}
+          />
+        )}
+        <View style={styles.videoPlayOverlay}>
+          <View style={styles.videoPlayBtn}>
+            <Play size={28} color="#1f2937" fill="#1f2937" />
+          </View>
+        </View>
+      </MediaPressable>
+      <VideoPreviewModal
+        visible={viewerOpen}
+        uri={url}
+        fileName={fileName}
         onClose={() => setViewerOpen(false)}
       />
     </>
@@ -843,15 +934,14 @@ function AttachmentBlock({
 
   if (type === 'video' || isVideoAttachment(attachment)) {
     return (
-      <MediaPressable
-        style={[styles.mediaAction, {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill}]}
-        onPress={() => openUrl(url)}
-        accessibilityRole="button">
-        <Video size={22} color={textColor} />
-        <Text style={[styles.mediaActionText, {color: textColor}]}>
-          {labels.openVideo}
-        </Text>
-      </MediaPressable>
+      <VideoAttachmentPreview
+        url={url}
+        posterUrl={attachment.preview_url}
+        fileName={attachmentLabel(attachment)}
+        out={out}
+        width={attachment.width}
+        height={attachment.height}
+      />
     );
   }
 
@@ -1005,10 +1095,12 @@ export const MessageBubble = memo(function MessageBubble({
   pinned,
   hidden,
   spacingAfter = 2,
+  chatType,
+  currentUserId,
   onLongPress,
 }: Props) {
   const {t} = useI18n();
-  const out = isOutgoing(item);
+  const out = isOutgoing(item, {chatType, currentUserId});
   const type = item.type || 'text';
   const metadata = getMetadata(item);
   const attachments = getAttachments(item);
@@ -1429,9 +1521,10 @@ export const MessageBubble = memo(function MessageBubble({
     !!item.content &&
     !isTemplate &&
     type !== 'image' &&
-    type !== 'sticker';
+    type !== 'sticker' &&
+    type !== 'video';
 
-  // Imagem/sticker sem texto ainda mostra caption se houver
+  // Imagem/sticker/vídeo sem texto ainda mostra caption se houver
   const caption =
     (type === 'image' || type === 'sticker' || type === 'video' || type === 'document') &&
     item.content
@@ -1442,14 +1535,19 @@ export const MessageBubble = memo(function MessageBubble({
     type === 'image' ||
     type === 'sticker' ||
     attachments.some(att => isImageAttachment(att));
+  const hasVideoMedia =
+    type === 'video' || attachments.some(att => isVideoAttachment(att));
+  // Imagem/vídeo: padding mínimo + borda colada (mesmo tratamento visual)
+  const hasEdgeMedia = hasImageMedia || hasVideoMedia;
   const hasAudioMedia =
     type === 'audio' || attachments.some(att => isAudioAttachment(att));
   const hasLinkedText = !!item.content?.trim() || !!emailSubject;
   // Áudio sem texto: horário sobreposto no player (play centralizado)
-  const audioMetaOverlay = hasAudioMedia && !hasLinkedText && !hasImageMedia;
-  // Imagem, ou áudio com caption: horário embaixo
+  const audioMetaOverlay =
+    hasAudioMedia && !hasLinkedText && !hasEdgeMedia;
+  // Imagem/vídeo, ou áudio com caption: horário embaixo
   const metaBelow =
-    hasImageMedia || (hasAudioMedia && hasLinkedText);
+    hasEdgeMedia || (hasAudioMedia && hasLinkedText);
   const showSideMeta = !metaBelow && !audioMetaOverlay && buttons.length === 0;
   const showEmailBody =
     (showTextContent || canPreviewEmail) && !templateParts;
@@ -1465,7 +1563,7 @@ export const MessageBubble = memo(function MessageBubble({
       pinned={pinned}
       onLongPress={handleLongPress}
       reactions={reactions}
-      style={hasImageMedia ? styles.bubbleImage : undefined}>
+      style={hasEdgeMedia ? styles.bubbleImage : undefined}>
       {/* Título do e-mail em largura total — ignora a coluna do horário. */}
       {emailSubject && !templateParts ? (
         <View style={[emailHeaderPad, styles.emailSubjectFull]}>
@@ -1533,8 +1631,8 @@ export const MessageBubble = memo(function MessageBubble({
       ) : null}
 
       <BubbleContentRow
-        textPad={!hasImageMedia && !hasAudioMedia}
-        imagePad={hasImageMedia}
+        textPad={!hasEdgeMedia && !hasAudioMedia}
+        imagePad={hasEdgeMedia}
         out={out}
         meta={
           showSideMeta && !(emailSubject && !showEmailBody) ? (
@@ -1546,7 +1644,7 @@ export const MessageBubble = memo(function MessageBubble({
             <View
               style={[
                 styles.quote,
-                hasImageMedia && styles.imageInnerPad,
+                hasEdgeMedia && styles.imageInnerPad,
                 {
                   backgroundColor: out
                     ? 'rgba(255,255,255,0.14)'
@@ -1718,7 +1816,7 @@ export const MessageBubble = memo(function MessageBubble({
         {metaBelow && buttons.length === 0 ? (
           <View
             style={
-              hasImageMedia
+              hasEdgeMedia
                 ? out
                   ? styles.imageMetaPad
                   : styles.imageMetaPadIn
@@ -1951,6 +2049,27 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg - 1,
     borderBottomLeftRadius: 5,
     overflow: 'hidden',
+  },
+  videoPreview: {
+    backgroundColor: '#0f172a',
+  },
+  videoPosterFallback: {
+    backgroundColor: '#0f172a',
+  },
+  videoPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  videoPlayBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: radii.full,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 3,
   },
   sticker: {
     marginBottom: 0,

@@ -54,6 +54,7 @@ export function internalChatToListItem(
           status: last.status,
           type: last.type,
           sender_type: last.sender_type,
+          sender_agent_name: last.sender_agent_name,
         }
       : null,
   };

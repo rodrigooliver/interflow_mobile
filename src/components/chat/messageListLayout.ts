@@ -1,5 +1,9 @@
 import type {ChatMessage} from '../../services/chatsApi';
-import {isOutgoing, isSystemEvent} from './messageHelpers';
+import {
+  isOutgoing,
+  isSystemEvent,
+  type MessageSideContext,
+} from './messageHelpers';
 
 export type MessageListRow =
   | {kind: 'date'; id: string; label: string; dayKey: string}
@@ -46,13 +50,14 @@ function isCenteredMessage(msg: ChatMessage): boolean {
 export function getSpacingAfterMessage(
   message: ChatMessage,
   newerNeighbor: ChatMessage | null,
+  sideCtx?: MessageSideContext,
 ): number {
   if (isCenteredMessage(message)) return 18;
   if (!newerNeighbor) return 2;
   if (isCenteredMessage(newerNeighbor)) return 18;
 
-  const curOut = isOutgoing(message);
-  const newerOut = isOutgoing(newerNeighbor);
+  const curOut = isOutgoing(message, sideCtx);
+  const newerOut = isOutgoing(newerNeighbor, sideCtx);
   if (curOut !== newerOut) return 22;
   return 2;
 }

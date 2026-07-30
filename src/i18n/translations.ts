@@ -142,6 +142,17 @@ const pt = {
     zoomIn: 'Aumentar zoom',
     zoomOut: 'Diminuir zoom',
   },
+  videoViewer: {
+    close: 'Fechar',
+    save: 'Salvar vídeo',
+    saved: 'Vídeo salvo em Fotos',
+    saveError: 'Não foi possível salvar o vídeo.',
+    loadError: 'Não foi possível reproduzir o vídeo.',
+    permissionDenied: 'Permissão necessária para salvar na galeria.',
+    rebuildRequired:
+      'É preciso reinstalar o app (rebuild nativo) para salvar em Fotos.',
+    play: 'Reproduzir vídeo',
+  },
   messageDetails: {
     title: 'Detalhes da mensagem',
     messageId: 'ID da mensagem',
@@ -378,6 +389,17 @@ const en: Dict = {
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
   },
+  videoViewer: {
+    close: 'Close',
+    save: 'Save video',
+    saved: 'Video saved to Photos',
+    saveError: 'Could not save the video.',
+    loadError: 'Could not play the video.',
+    permissionDenied: 'Permission required to save to gallery.',
+    rebuildRequired:
+      'Please reinstall the app (native rebuild) to save to Photos.',
+    play: 'Play video',
+  },
   messageDetails: {
     title: 'Message details',
     messageId: 'Message ID',
@@ -605,6 +627,17 @@ const es: Dict = {
       'Hay que reinstalar la app (rebuild nativo) para guardar en Fotos.',
     zoomIn: 'Aumentar zoom',
     zoomOut: 'Reducir zoom',
+  },
+  videoViewer: {
+    close: 'Cerrar',
+    save: 'Guardar video',
+    saved: 'Video guardado en Fotos',
+    saveError: 'No se pudo guardar el video.',
+    loadError: 'No se pudo reproducir el video.',
+    permissionDenied: 'Se necesita permiso para guardar en la galería.',
+    rebuildRequired:
+      'Hay que reinstalar la app (rebuild nativo) para guardar en Fotos.',
+    play: 'Reproducir video',
   },
   messageDetails: {
     title: 'Detalles del mensaje',

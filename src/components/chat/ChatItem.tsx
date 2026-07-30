@@ -11,7 +11,6 @@ import type {ChatListItem} from '../../services/chatsApi';
 import {useTheme} from '../../contexts/ThemeContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
 import {MarkdownText} from '../MarkdownText';
-import {MessageStatusTicks} from '../MessageStatusTicks';
 import {ChannelIcon} from '../ChannelIcon';
 import {
   CHAT_STATUS_LABELS,
@@ -167,7 +166,11 @@ export const ChatItem = memo(function ChatItem({
   const isDark = mode === 'dark';
   const unread = item.unread_count || 0;
   const preview = getLastMessagePreview(item);
-  const lastMessage = preview.lastMessage;
+  const isInternalChat =
+    item.type === 'internal_group' ||
+    item.type === 'internal_direct' ||
+    item.chat_type === 'internal_group' ||
+    item.chat_type === 'internal_direct';
   const avatarUri =
     item.profile_picture ||
     item.customer?.profile_picture ||
@@ -205,17 +208,10 @@ export const ChatItem = memo(function ChatItem({
         </View>
 
         <View style={styles.rowBottom}>
-          {lastMessage?.sender_type === 'agent' ? (
-            <MessageStatusTicks
-              status={lastMessage.status}
-              mutedColor={theme.tertiaryLabel}
-              size={15}
-            />
-          ) : null}
-
-          {preview.kind === 'text' ? (
+          {/* Sem ticks de status; internos: "Nome: mensagem" (igual GroupChatItem web). */}
+          {preview.kind === 'text' && !isInternalChat ? (
             <MarkdownText
-              content={preview.text}
+              content={preview.displayText}
               color={
                 unread > 0 ? theme.secondaryLabel : theme.tertiaryLabel
               }
@@ -236,7 +232,7 @@ export const ChatItem = memo(function ChatItem({
                 },
               ]}
               numberOfLines={1}>
-              {preview.text}
+              {preview.displayText}
             </Text>
           )}
 

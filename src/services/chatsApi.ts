@@ -13,6 +13,7 @@ export interface ChatLastMessage {
   error_message?: string | null;
   created_at?: string | null;
   sender_type?: string | null;
+  sender_agent_name?: string | null;
   type?: string | null;
   reaction?: string | null;
   message_type?: string | null;

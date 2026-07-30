@@ -29,44 +29,61 @@ export function getLastMessage(item: ChatListItem): ChatLastMessage | null {
   );
 }
 
+function isInternalListChat(item: ChatListItem): boolean {
+  const chatType = item.type || item.chat_type;
+  return chatType === 'internal_group' || chatType === 'internal_direct';
+}
+
+/** Prefixo "Nome:" como GroupChatItem da web (chats internos). */
+function getInternalSenderPrefix(lastMessage: ChatLastMessage): string {
+  if (lastMessage.sender_type === 'system') return 'Sistema';
+  if (lastMessage.sender_type === 'agent') {
+    return lastMessage.sender_agent_name?.trim() || 'Agente';
+  }
+  return 'Membro';
+}
+
 export function getLastMessagePreview(item: ChatListItem): {
   kind: 'text' | 'reaction' | 'deleted' | 'type' | 'empty';
   text: string;
+  /** Ex.: "João: oi" em chats internos */
+  displayText: string;
   lastMessage: ChatLastMessage | null;
 } {
   const lastMessage = getLastMessage(item);
   if (!lastMessage) {
-    return {kind: 'empty', text: 'Sem mensagens', lastMessage: null};
+    return {
+      kind: 'empty',
+      text: 'Sem mensagens',
+      displayText: 'Sem mensagens',
+      lastMessage: null,
+    };
   }
 
   const type = lastMessage.type || 'text';
+  let kind: 'text' | 'reaction' | 'deleted' | 'type' | 'empty' = 'type';
+  let text = '';
 
   if (type === 'text') {
-    return {
-      kind: 'text',
-      text: lastMessage.content?.trim() || 'Texto',
-      lastMessage,
-    };
-  }
-
-  if (type === 'reaction') {
+    kind = 'text';
+    text = lastMessage.content?.trim() || 'Texto';
+  } else if (type === 'reaction') {
+    kind = 'reaction';
     const reaction = lastMessage.reaction || '';
-    return {
-      kind: 'reaction',
-      text: reaction ? `Reagiu com ${reaction}` : 'Reação',
-      lastMessage,
-    };
+    text = reaction ? `Reagiu com ${reaction}` : 'Reação';
+  } else if (type === 'deleted') {
+    kind = 'deleted';
+    text = 'Mensagem apagada';
+  } else {
+    kind = 'type';
+    text = MESSAGE_TYPE_LABELS[type] || lastMessage.content?.trim() || type;
   }
 
-  if (type === 'deleted') {
-    return {kind: 'deleted', text: 'Mensagem apagada', lastMessage};
-  }
+  const displayText = isInternalListChat(item)
+    ? `${getInternalSenderPrefix(lastMessage)}: ${text}`
+    : text;
 
-  return {
-    kind: 'type',
-    text: MESSAGE_TYPE_LABELS[type] || lastMessage.content?.trim() || type,
-    lastMessage,
-  };
+  return {kind, text, displayText, lastMessage};
 }
 
 export function normalizeDeliveryStatus(

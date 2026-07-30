@@ -98,6 +98,7 @@ import {
 import {
   getDownloadableMedia,
   isHiddenFromChatThread,
+  isOutgoing,
 } from '../../components/chat/messageHelpers';
 import {downloadMessageMedia} from '../../services/downloadMedia';
 
@@ -870,9 +871,13 @@ export function ChatThreadScreen({
     [pinned],
   );
 
+  const actionIsOwnOutgoing =
+    !!actionMessage &&
+    isOutgoing(actionMessage, {chatType, currentUserId: userId});
+
   const actionCanEdit =
     !!actionMessage &&
-    actionMessage.sender_type === 'agent' &&
+    actionIsOwnOutgoing &&
     (actionMessage.type === 'text' || !actionMessage.type) &&
     channelFeatures.canEditMessages &&
     canEditMessageByAge(actionMessage.created_at);
@@ -881,8 +886,7 @@ export function ChatThreadScreen({
     !!actionMessage &&
     channelFeatures.canDeleteMessages &&
     canDeleteMessageByAge(actionMessage.created_at, chatMeta?.status) &&
-    (actionMessage.sender_type === 'agent' ||
-      actionMessage.status === 'scheduled');
+    (actionIsOwnOutgoing || actionMessage.status === 'scheduled');
 
   const actionCanPin = !!actionMessage && !isHiddenFromChatThread(actionMessage);
 
@@ -1013,12 +1017,14 @@ export function ChatThreadScreen({
       // Gap olha a vizinha mais nova (index-1). Se no caminho há chip de data,
       // o separador já dá respiro — evita somar 22px em cima do padding da data.
       const towardNewer = listRows[index - 1];
+      const sideCtx = {chatType, currentUserId: userId};
       const spacingAfter =
         towardNewer?.kind === 'date'
           ? 2
           : getSpacingAfterMessage(
               item.message,
               findNeighborMessage(listRows, index, -1),
+              sideCtx,
             );
 
       return (
@@ -1026,11 +1032,13 @@ export function ChatThreadScreen({
           item={item.message}
           theme={bubbleTheme}
           spacingAfter={spacingAfter}
+          chatType={chatType}
+          currentUserId={userId}
           onLongPress={handleLongPress}
         />
       );
     },
-    [bubbleTheme, handleLongPress, listRows],
+    [bubbleTheme, chatType, handleLongPress, listRows, userId],
   );
 
   const keyExtractor = useCallback((item: MessageListRow) => item.id, []);
@@ -1399,6 +1407,8 @@ export function ChatThreadScreen({
         bubbleTheme={bubbleTheme}
         channelFeatures={channelFeatures}
         chatStatus={chatMeta?.status}
+        chatType={chatType}
+        currentUserId={userId}
         reacting={reacting}
         canEdit={actionCanEdit}
         canDelete={actionCanDelete}
