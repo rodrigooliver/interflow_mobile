@@ -65,11 +65,14 @@ const light = {
   fill: '#E5E7EB',
   searchBg: 'rgba(255, 255, 255, 0.75)',
   inputBg: 'rgba(255, 255, 255, 0.8)',
-  bubbleOut: brand.blue,
-  bubbleOutText: '#FFFFFF',
-  bubbleIn: 'rgba(255, 255, 255, 0.88)',
-  bubbleInText: '#111827',
-  bubbleInBorder: 'rgba(229, 231, 235, 0.95)',
+  // Paridade web: getAgentBubbleClass / getCustomerBubbleClass
+  bubbleOut: 'rgba(239, 246, 255, 0.95)', // blue-50/95
+  bubbleOutText: '#172554', // blue-950
+  bubbleOutBorder: 'rgba(191, 219, 254, 0.70)', // blue-200/70
+  bubbleOutMuted: 'rgba(37, 99, 235, 0.55)', // blue-600 soft
+  bubbleIn: 'rgba(255, 255, 255, 0.90)',
+  bubbleInText: '#111827', // gray-900
+  bubbleInBorder: 'rgba(229, 231, 235, 0.80)', // gray-200/80
   statusBarStyle: 'dark-content' as const,
   text: '#111827',
   textSecondary: '#4B5563',
@@ -95,11 +98,14 @@ const dark = {
   fill: '#374151',
   searchBg: 'rgba(31, 41, 55, 0.65)',
   inputBg: 'rgba(31, 41, 55, 0.7)',
-  bubbleOut: brand.blueDark,
-  bubbleOutText: '#FFFFFF',
-  bubbleIn: 'rgba(55, 65, 81, 0.72)',
-  bubbleInText: '#F9FAFB',
-  bubbleInBorder: 'rgba(59, 130, 246, 0.18)',
+  // Paridade web: agent blue-950/45 + customer gray-800/40
+  bubbleOut: 'rgba(23, 37, 84, 0.45)', // blue-950/45
+  bubbleOutText: '#EFF6FF', // blue-50
+  bubbleOutBorder: 'rgba(59, 130, 246, 0.25)', // blue-500/25
+  bubbleOutMuted: 'rgba(147, 197, 253, 0.75)', // blue-300
+  bubbleIn: 'rgba(31, 41, 55, 0.40)', // gray-800/40
+  bubbleInText: '#E5E7EB', // gray-200
+  bubbleInBorder: 'rgba(59, 130, 246, 0.20)', // blue-500/20
   statusBarStyle: 'light-content' as const,
   text: '#F9FAFB',
   textSecondary: '#D1D5DB',

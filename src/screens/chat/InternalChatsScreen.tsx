@@ -30,7 +30,7 @@ import type {InternalChatSummary} from '../../utils/internalChats';
 import {resolveInternalDisplayName} from '../../utils/internalChats';
 import {supabase} from '../../lib/supabase';
 import {ChatListSkeleton} from '../../components/Skeleton';
-import {ChatListRow} from '../../components/ChatListRow';
+import {ChatItem} from '../../components/chat/ChatItem';
 import {FetchErrorState} from '../../components/FetchErrorState';
 import {FLOATING_TAB_BAR_CLEARANCE} from '../../components/BottomTabBar';
 import {
@@ -318,7 +318,7 @@ export function InternalChatsScreen({
           renderItem={({item}) => {
             const title = item.group_name?.trim() || 'Chat';
             return (
-              <ChatListRow
+              <ChatItem
                 item={item}
                 title={title}
                 onPress={() => onOpenChat(item.id, title)}

@@ -11,6 +11,8 @@ import {
   Alert,
   Platform,
   Animated,
+  Modal,
+  Pressable,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from 'react-native';
@@ -18,7 +20,16 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import {MoreHorizontal, Plus, Search} from 'lucide-react-native';
+import {
+  Archive,
+  Check,
+  Eye,
+  Filter,
+  Globe,
+  MoreHorizontal,
+  Plus,
+  Search,
+} from 'lucide-react-native';
 import {useAuth} from '../../contexts/AuthContext';
 import {useTheme} from '../../contexts/ThemeContext';
 import {useI18n} from '../../contexts/I18nContext';
@@ -29,6 +40,7 @@ import {
   applyQuickFilterCriteria,
   emptyFilterInput,
   resolveQuickFilterColor,
+  type ChatFilterRpcInput,
 } from '../../utils/chatFilterRpc';
 import {
   PAGE_SIZE,
@@ -38,7 +50,16 @@ import {
 } from '../../services/chatsApi';
 import {supabase} from '../../lib/supabase';
 import {ChatListSkeleton} from '../../components/Skeleton';
-import {ChatListRow} from '../../components/ChatListRow';
+import {ChatItem} from '../../components/chat/ChatItem';
+import {ChatActionsSheet} from '../../components/chat/ChatActionsSheet';
+import {ChatDetailsModal} from '../../components/chat/ChatDetailsModal';
+import {StartChatModal} from '../../components/chat/StartChatModal';
+import {CustomerAddModal} from '../../components/chat/CustomerAddModal';
+import {ChatFiltersPanel} from '../../components/chat/ChatFiltersPanel';
+import {TransferAgentModal} from '../../components/chat/TransferAgentModal';
+import {TransferTeamModal} from '../../components/chat/TransferTeamModal';
+import {MergeChatModal} from '../../components/chat/MergeChatModal';
+import {TransferCustomerModal} from '../../components/chat/TransferCustomerModal';
 import {FetchErrorState} from '../../components/FetchErrorState';
 import {FLOATING_TAB_BAR_CLEARANCE} from '../../components/BottomTabBar';
 import {
@@ -94,7 +115,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
   const {session, currentOrganizationMember} = useAuth();
   const {colors: theme} = useTheme();
   const {t} = useI18n();
-  const {chatsPermissions} = usePermissions();
+  const {chatsPermissions, isOwnerOrAdmin} = usePermissions();
   const insets = useSafeAreaInsets();
 
   const orgId = currentOrganizationMember?.organization_id;
@@ -182,6 +203,25 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
   const [hasMore, setHasMore] = useState(true);
   const [fetchError, setFetchError] = useState<FetchErrorKind | null>(null);
   const [search, setSearch] = useState('');
+  const [actionChat, setActionChat] = useState<ChatListItem | null>(null);
+  const [detailsChatId, setDetailsChatId] = useState<string | null>(null);
+  const [showStartChat, setShowStartChat] = useState(false);
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [transferAgentChat, setTransferAgentChat] =
+    useState<ChatListItem | null>(null);
+  const [transferTeamChat, setTransferTeamChat] = useState<ChatListItem | null>(
+    null,
+  );
+  const [mergeChat, setMergeChat] = useState<ChatListItem | null>(null);
+  const [transferCustomerChat, setTransferCustomerChat] =
+    useState<ChatListItem | null>(null);
+  const [advancedFilter, setAdvancedFilter] = useState<ChatFilterRpcInput | null>(
+    null,
+  );
+  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showListMenu, setShowListMenu] = useState(false);
   /** Compact bar só recebe toques quando já está visível o suficiente */
   const [compactInteractive, setCompactInteractive] = useState(false);
   const offsetRef = useRef(0);
@@ -210,6 +250,60 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
     setTimeout(() => searchInputRef.current?.focus(), 280);
   }, []);
 
+  const showCreateMenu = useCallback(() => {
+    Alert.alert('', undefined, [
+      {text: t.chats.newChat, onPress: () => setShowStartChat(true)},
+      {text: t.chats.newCustomer, onPress: () => setShowAddCustomer(true)},
+      {text: t.chats.cancel, style: 'cancel'},
+    ]);
+  }, [t.chats.cancel, t.chats.newChat, t.chats.newCustomer]);
+
+  const listMenuActive = !!(advancedFilter || showUnreadOnly || showArchived);
+
+  const handleChatUpdated = useCallback(
+    (chatId: string, patch: Partial<ChatListItem>) => {
+      setChats(prev =>
+        prev.map(chat => (chat.id === chatId ? {...chat, ...patch} : chat)),
+      );
+    },
+    [],
+  );
+
+  const handleChatRemoved = useCallback((chatId: string) => {
+    setChats(prev => prev.filter(chat => chat.id !== chatId));
+  }, []);
+
+  const filtersPanelValue = useMemo((): ChatFilterRpcInput | null => {
+    if (!orgId || !userId) return null;
+    const filter = visibleFilters.find(
+      (f: QuickFilterItem) => f.id === selectedFilter,
+    );
+    let input = emptyFilterInput(orgId, userId, selectedFilter);
+    input = applyQuickFilterCriteria(input, selectedFilter, filter?.filters, {
+      isDefault: filter?.isDefault,
+      isCustom: filter?.isCustom,
+    });
+    if (advancedFilter) {
+      input = {
+        ...input,
+        selectedStatuses: advancedFilter.selectedStatuses,
+        selectedSpamFilter: advancedFilter.selectedSpamFilter,
+        isCollaboratingFilter: advancedFilter.isCollaboratingFilter,
+      };
+    }
+    input.showUnreadOnly = showUnreadOnly;
+    input.showArchived = showArchived;
+    return input;
+  }, [
+    orgId,
+    userId,
+    selectedFilter,
+    visibleFilters,
+    advancedFilter,
+    showUnreadOnly,
+    showArchived,
+  ]);
+
   const buildInput = useCallback(
     (filterId: string, offset = 0, searchText = search) => {
       if (!orgId || !userId) return null;
@@ -221,12 +315,30 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
         isDefault: filter?.isDefault,
         isCustom: filter?.isCustom,
       });
+      if (advancedFilter) {
+        input = {
+          ...input,
+          selectedStatuses: advancedFilter.selectedStatuses,
+          selectedSpamFilter: advancedFilter.selectedSpamFilter,
+          isCollaboratingFilter: advancedFilter.isCollaboratingFilter,
+        };
+      }
+      input.showUnreadOnly = showUnreadOnly;
+      input.showArchived = showArchived;
       input.offset = offset;
       input.pageSize = PAGE_SIZE;
       if (searchText.trim()) input.searchText = searchText.trim();
       return input;
     },
-    [orgId, userId, visibleFilters, search],
+    [
+      orgId,
+      userId,
+      visibleFilters,
+      search,
+      advancedFilter,
+      showUnreadOnly,
+      showArchived,
+    ],
   );
 
   const loadChats = useCallback(
@@ -277,7 +389,14 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
     setChats([]);
     listRef.current?.scrollToOffset({offset: 0, animated: false});
     void loadChats(true);
-  }, [selectedFilter, orgId, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    selectedFilter,
+    orgId,
+    userId,
+    showUnreadOnly,
+    showArchived,
+    advancedFilter,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!orgId || !userId) return;
@@ -328,14 +447,25 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
         </Text>
         <View style={styles.compactActions}>
           <TouchableOpacity
-            style={[styles.circleBtn, {backgroundColor: theme.fill}]}
-            onPress={() => onOpenWeb('/app/settings')}
+            style={[
+              styles.circleBtn,
+              {
+                backgroundColor: listMenuActive ? brand.blueSoft : theme.fill,
+              },
+            ]}
+            onPress={() => setShowListMenu(true)}
+            accessibilityLabel={t.chats.filters}
             hitSlop={8}>
-            <MoreHorizontal size={20} color={theme.label} strokeWidth={2.2} />
+            <MoreHorizontal
+              size={20}
+              color={listMenuActive ? brand.blue : theme.label}
+              strokeWidth={2.2}
+            />
+            {listMenuActive ? <View style={styles.menuDot} /> : null}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.circleBtnPrimary, {backgroundColor: brand.blue}]}
-            onPress={() => onOpenWeb('/app/chats')}
+            onPress={showCreateMenu}
             accessibilityLabel={t.chats.newChat}
             hitSlop={8}>
             <Plus size={20} color="#FFFFFF" strokeWidth={2.4} />
@@ -457,12 +587,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
           },
         ]}>
         <View style={styles.compactBar}>
-          <TouchableOpacity
-            style={[styles.circleBtn, {backgroundColor: theme.fill}]}
-            onPress={() => onOpenWeb('/app/settings')}
-            hitSlop={8}>
-            <MoreHorizontal size={20} color={theme.label} strokeWidth={2.2} />
-          </TouchableOpacity>
+          <View style={{width: 36}} />
 
           <Text style={[styles.compactTitle, {color: theme.label}]}>
             {t.chats.title}
@@ -476,8 +601,25 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
               <Search size={18} color={theme.label} strokeWidth={2.2} />
             </TouchableOpacity>
             <TouchableOpacity
+              style={[
+                styles.circleBtn,
+                {
+                  backgroundColor: listMenuActive ? brand.blueSoft : theme.fill,
+                },
+              ]}
+              onPress={() => setShowListMenu(true)}
+              accessibilityLabel={t.chats.filters}
+              hitSlop={8}>
+              <MoreHorizontal
+                size={20}
+                color={listMenuActive ? brand.blue : theme.label}
+                strokeWidth={2.2}
+              />
+              {listMenuActive ? <View style={styles.menuDot} /> : null}
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[styles.circleBtnPrimary, {backgroundColor: brand.blue}]}
-              onPress={() => onOpenWeb('/app/chats')}
+              onPress={showCreateMenu}
               accessibilityLabel={t.chats.newChat}
               hitSlop={8}>
               <Plus size={20} color="#FFFFFF" strokeWidth={2.4} />
@@ -547,31 +689,229 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
         renderItem={({item}) => {
           const title = chatTitle(item);
           return (
-            <ChatListRow
+            <ChatItem
               item={item}
               title={title}
               onPress={() => onOpenChat(item.id, title)}
-              onLongPress={() => {
-                Alert.alert(title, undefined, [
-                  {text: t.chats.cancel, style: 'cancel'},
-                  {
-                    text: t.chats.openWeb,
-                    onPress: () => onOpenWeb(`/app/chats/${item.id}`),
-                  },
-                  {
-                    text: t.chats.markRead,
-                    onPress: () => {
-                      void supabase
-                        .from('chats')
-                        .update({unread_count: 0})
-                        .eq('id', item.id)
-                        .then(() => loadChats(true));
-                    },
-                  },
-                ]);
-              }}
+              onLongPress={() => setActionChat(item)}
             />
           );
+        }}
+      />
+
+      <Modal
+        visible={showListMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowListMenu(false)}>
+        <Pressable
+          style={styles.listMenuBackdrop}
+          onPress={() => setShowListMenu(false)}>
+          <Pressable
+            style={[
+              styles.listMenuCard,
+              {
+                backgroundColor: theme.card,
+                borderColor: theme.border,
+                top: insets.top + 52,
+              },
+            ]}
+            onPress={e => e.stopPropagation()}>
+            <TouchableOpacity
+              style={[styles.listMenuRow, {borderBottomColor: theme.separator}]}
+              onPress={() => {
+                setShowListMenu(false);
+                setShowFilters(true);
+              }}>
+              <Filter
+                size={18}
+                color={advancedFilter ? brand.blue : theme.label}
+                strokeWidth={2.2}
+              />
+              <Text
+                style={[
+                  styles.listMenuLabel,
+                  {color: advancedFilter ? brand.blue : theme.label},
+                ]}>
+                {t.chats.filters}
+              </Text>
+              {advancedFilter ? (
+                <Check size={16} color={brand.blue} strokeWidth={2.4} />
+              ) : null}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.listMenuRow, {borderBottomColor: theme.separator}]}
+              onPress={() => setShowUnreadOnly(prev => !prev)}>
+              <Eye
+                size={18}
+                color={showUnreadOnly ? brand.blue : theme.label}
+                strokeWidth={2.2}
+              />
+              <Text
+                style={[
+                  styles.listMenuLabel,
+                  {color: showUnreadOnly ? brand.blue : theme.label},
+                ]}>
+                {t.chats.unreadOnly}
+              </Text>
+              {showUnreadOnly ? (
+                <Check size={16} color={brand.blue} strokeWidth={2.4} />
+              ) : null}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.listMenuRow, {borderBottomColor: theme.separator}]}
+              onPress={() => setShowArchived(prev => !prev)}>
+              <Archive
+                size={18}
+                color={showArchived ? brand.blue : theme.label}
+                strokeWidth={2.2}
+              />
+              <Text
+                style={[
+                  styles.listMenuLabel,
+                  {color: showArchived ? brand.blue : theme.label},
+                ]}>
+                {t.chats.archived}
+              </Text>
+              {showArchived ? (
+                <Check size={16} color={brand.blue} strokeWidth={2.4} />
+              ) : null}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.listMenuRow, {borderBottomWidth: 0}]}
+              onPress={() => {
+                setShowListMenu(false);
+                const filterQuery = selectedFilter
+                  ? `?filter=${encodeURIComponent(selectedFilter)}`
+                  : '';
+                onOpenWeb(`/app/chats${filterQuery}`);
+              }}>
+              <Globe size={18} color={theme.label} strokeWidth={2.2} />
+              <Text style={[styles.listMenuLabel, {color: theme.label}]}>
+                {t.chats.openWeb}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {orgId && userId && filtersPanelValue ? (
+        <ChatFiltersPanel
+          visible={showFilters}
+          value={filtersPanelValue}
+          onChange={next => {
+            setAdvancedFilter(next);
+            setShowUnreadOnly(next.showUnreadOnly);
+            setShowArchived(next.showArchived);
+          }}
+          onClose={() => setShowFilters(false)}
+          onApply={() => {
+            offsetRef.current = 0;
+          }}
+        />
+      ) : null}
+
+      <ChatActionsSheet
+        visible={!!actionChat}
+        chat={actionChat}
+        organizationId={orgId || ''}
+        userId={userId || ''}
+        isAdmin={isOwnerOrAdmin}
+        canTransfer={chatsPermissions.canTransferChats}
+        onClose={() => setActionChat(null)}
+        onUpdated={handleChatUpdated}
+        onRemoved={handleChatRemoved}
+        onOpenDetails={chatId => setDetailsChatId(chatId)}
+        onOpenCustomer={customerId => {
+          console.log('[ChatsScreen] openCustomer', customerId);
+          onOpenWeb(`/app/customers/${customerId}/edit`);
+        }}
+        onOpenMerge={chat => setMergeChat(chat)}
+        onOpenTransferTeam={chat => setTransferTeamChat(chat)}
+        onOpenTransferAttendance={chat => setTransferAgentChat(chat)}
+        onOpenTransferCustomer={chat => setTransferCustomerChat(chat)}
+      />
+
+      <ChatDetailsModal
+        visible={!!detailsChatId}
+        chatId={detailsChatId || ''}
+        organizationId={orgId || ''}
+        onClose={() => setDetailsChatId(null)}
+      />
+
+      {orgId ? (
+        <StartChatModal
+          visible={showStartChat}
+          organizationId={orgId}
+          onClose={() => setShowStartChat(false)}
+          onChatReady={(chatId, title) => {
+            setShowStartChat(false);
+            onOpenChat(chatId, title);
+          }}
+        />
+      ) : null}
+
+      {orgId ? (
+        <CustomerAddModal
+          visible={showAddCustomer}
+          organizationId={orgId}
+          onClose={() => setShowAddCustomer(false)}
+          onCreated={() => {
+            setShowAddCustomer(false);
+            setShowStartChat(true);
+          }}
+        />
+      ) : null}
+
+      <TransferAgentModal
+        visible={!!transferAgentChat}
+        chatId={transferAgentChat?.id || ''}
+        organizationId={orgId || ''}
+        onClose={() => setTransferAgentChat(null)}
+        onTransferred={() => {
+          setTransferAgentChat(null);
+          void loadChats(true);
+        }}
+      />
+
+      <TransferTeamModal
+        visible={!!transferTeamChat}
+        chatId={transferTeamChat?.id || ''}
+        organizationId={orgId || ''}
+        currentTeamId={transferTeamChat?.team?.id}
+        onClose={() => setTransferTeamChat(null)}
+        onTransferred={() => {
+          setTransferTeamChat(null);
+          void loadChats(true);
+        }}
+      />
+
+      <MergeChatModal
+        visible={!!mergeChat}
+        chatId={mergeChat?.id || ''}
+        organizationId={orgId || ''}
+        customerId={mergeChat?.customer?.id}
+        onClose={() => setMergeChat(null)}
+        onMerged={targetChatId => {
+          const sourceId = mergeChat?.id;
+          setMergeChat(null);
+          if (sourceId) handleChatRemoved(sourceId);
+          onOpenChat(targetChatId);
+        }}
+      />
+
+      <TransferCustomerModal
+        visible={!!transferCustomerChat}
+        chatId={transferCustomerChat?.id || ''}
+        organizationId={orgId || ''}
+        currentCustomerId={transferCustomerChat?.customer?.id}
+        onClose={() => setTransferCustomerChat(null)}
+        onTransferred={() => {
+          setTransferCustomerChat(null);
+          void loadChats(true);
         }}
       />
     </SafeAreaView>
@@ -608,7 +948,7 @@ const styles = StyleSheet.create({
   compactTitle: {
     position: 'absolute',
     left: 56 + spacing.lg,
-    right: 96 + spacing.lg,
+    right: 140 + spacing.lg,
     textAlign: 'center',
     fontSize: typography.headline,
     fontWeight: '700',
@@ -624,6 +964,51 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  menuDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: brand.blue,
+  },
+  listMenuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  listMenuCard: {
+    position: 'absolute',
+    right: spacing.lg,
+    minWidth: 220,
+    borderRadius: radii.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.12,
+        shadowRadius: 12,
+        shadowOffset: {width: 0, height: 6},
+      },
+      android: {elevation: 8},
+      default: {},
+    }),
+  },
+  listMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  listMenuLabel: {
+    flex: 1,
+    fontSize: typography.subhead,
+    fontWeight: '600',
   },
   circleBtnPrimary: {
     width: 36,

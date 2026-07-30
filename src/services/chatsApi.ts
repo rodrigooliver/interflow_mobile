@@ -54,11 +54,13 @@ export interface ChatListItem {
   chat_type?: string | null;
   unread_count?: number | null;
   last_message_at?: string | null;
+  last_customer_message_at?: string | null;
   created_at?: string | null;
   last_message?: ChatLastMessage | null;
   metadata?: {
     last_message?: ChatLastMessage | null;
     channel_name?: string | null;
+    archived?: boolean;
     [key: string]: unknown;
   } | null;
   customer?: ChatListCustomer | null;
@@ -67,10 +69,22 @@ export interface ChatListItem {
   profile_picture?: string | null;
   assigned_to?: string | null;
   is_fixed?: boolean | null;
+  is_archived?: boolean | null;
+  external_id?: string | null;
+  external_id_send?: string | null;
+  flow_session_id?: string | null;
+  ticket_number?: string | number | null;
+  channel_id?: string | null;
   channel?: {
+    id?: string | null;
     name?: string | null;
     type?: string | null;
     is_connected?: boolean | null;
+  } | null;
+  channel_details?: {
+    id?: string | null;
+    name?: string | null;
+    type?: string | null;
   } | null;
   team?: {id?: string; name?: string | null} | null;
   [key: string]: unknown;
@@ -101,6 +115,8 @@ export interface ChatMessage {
     file_name?: string;
     mime_type?: string | null;
     preview_url?: string;
+    width?: number | null;
+    height?: number | null;
   }> | null;
   [key: string]: unknown;
 }
@@ -273,6 +289,8 @@ export type SendChatMessageOptions = {
   type?: string;
   signMessage?: boolean;
   attachments?: ChatAttachmentInput[];
+  /** ISO datetime — agenda envio (igual web). */
+  scheduledFor?: string;
 };
 
 export async function sendChatMessage(
@@ -294,6 +312,9 @@ export async function sendChatMessage(
   );
   if (options?.replyToMessageId) {
     formData.append('replyToMessageId', options.replyToMessageId);
+  }
+  if (options?.scheduledFor) {
+    formData.append('scheduledFor', options.scheduledFor);
   }
 
   if (options?.attachments?.length) {

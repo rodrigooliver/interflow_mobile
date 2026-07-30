@@ -7,19 +7,19 @@ import {
   StyleSheet,
   ScrollView,
 } from 'react-native';
-import type {ChatListItem} from '../services/chatsApi';
-import {useTheme} from '../contexts/ThemeContext';
-import {brand, radii, spacing, typography} from '../theme/tokens';
-import {MarkdownText} from './MarkdownText';
-import {MessageStatusTicks} from './MessageStatusTicks';
-import {ChannelIcon} from './ChannelIcon';
+import type {ChatListItem} from '../../services/chatsApi';
+import {useTheme} from '../../contexts/ThemeContext';
+import {brand, radii, spacing, typography} from '../../theme/tokens';
+import {MarkdownText} from '../MarkdownText';
+import {MessageStatusTicks} from '../MessageStatusTicks';
+import {ChannelIcon} from '../ChannelIcon';
 import {
   CHAT_STATUS_LABELS,
   getChannelLabel,
   getLastMessagePreview,
   getTeamColor,
   getTeamInitials,
-} from '../utils/chatListDisplay';
+} from '../../utils/chatListDisplay';
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -150,19 +150,19 @@ function StatusBadge({
   );
 }
 
-type ChatListRowProps = {
+type ChatItemProps = {
   item: ChatListItem;
   title: string;
   onPress: () => void;
   onLongPress: () => void;
 };
 
-export const ChatListRow = memo(function ChatListRow({
+export const ChatItem = memo(function ChatItem({
   item,
   title,
   onPress,
   onLongPress,
-}: ChatListRowProps) {
+}: ChatItemProps) {
   const {theme: mode, colors: theme} = useTheme();
   const isDark = mode === 'dark';
   const unread = item.unread_count || 0;

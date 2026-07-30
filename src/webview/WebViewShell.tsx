@@ -5,7 +5,7 @@
  * @format
  */
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   StatusBar,
   StyleSheet,
@@ -45,7 +45,9 @@ import {
 import type {AuthSessionPayload} from '../bridge/authProtocol';
 import {
   buildHydrateInjectScript,
+  buildNavigateInjectScript,
   buildSignOutInjectScript,
+  extractAppPath,
   extractChatIdFromPath,
   isChatPath,
 } from '../bridge/authProtocol';
@@ -337,9 +339,22 @@ export interface WebViewShellProps {
   visible?: boolean;
   /** Path inicial a navegar após ready (ex: /app/settings) */
   pendingPath?: string | null;
+  /** Incrementa a cada openWeb para reaplicar o mesmo path */
+  pendingPathNonce?: number;
   onReady?: () => void;
   /** Intercepta paths de chat em modo híbrido */
   onNativeChatNavigate?: (chatId: string | null, path: string) => boolean;
+  /** Web pediu fechar o WebView (botão App no header da página). */
+  onCloseWeb?: (reason?: string) => void;
+  /**
+   * Estado do chrome híbrido: loading / erro / path atual.
+   * Usado para exibir o botão flutuante ← App quando necessário.
+   */
+  onChromeStateChange?: (state: {
+    loading: boolean;
+    hasError: boolean;
+    currentPath: string | null;
+  }) => void;
   disableOneSignalInit?: boolean;
 }
 
@@ -350,19 +365,36 @@ const WebViewShell = ({
   nativeAuthEvent = null,
   visible = true,
   pendingPath = null,
+  pendingPathNonce = 0,
   onReady,
   onNativeChatNavigate,
+  onCloseWeb,
+  onChromeStateChange,
   disableOneSignalInit = false,
 }: WebViewShellProps) => {
   const webViewRef = useRef<WebView | null>(null);
   const sessionPayloadRef = useRef(sessionPayload);
   const pendingPathRef = useRef(pendingPath);
+  const pendingPathNonceRef = useRef(pendingPathNonce);
+  /** Evita re-inject / re-hydrate em loop (pageFullyLoaded dispara várias vezes). */
+  const lastInjectedNavKeyRef = useRef<string | null>(null);
+  /** Dedupe auth.session com o mesmo access_token. */
+  const lastAuthBridgeTokenRef = useRef<string | null>(null);
+  /** Enquanto aguarda SPA chegar no pendingPath, mantém loading inicial. */
+  const awaitingNavKeyRef = useRef<string | null>(null);
+  const awaitingNavTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const didHydrateOnReadyRef = useRef(false);
   const webViewReadyAtRef = useRef<number | null>(null);
   const bootStartedAtRef = useRef(Date.now());
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const [url, setUrl] = useState(BASE_URL);
   const [initialUrlLoaded, setInitialUrlLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [reportedPath, setReportedPath] = useState<string | null>(null);
+  const onChromeStateChangeRef = useRef(onChromeStateChange);
+  onChromeStateChangeRef.current = onChromeStateChange;
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false);
   const [isWebViewVisible, setIsWebViewVisible] = useState(true);
   const lastNotificationRef = useRef<NotificationEvent | null>(null);
@@ -612,26 +644,78 @@ const WebViewShell = ({
     sessionPayloadRef.current = sessionPayload;
   }, [sessionPayload]);
 
+  const clearAwaitingNav = useCallback((reason: string) => {
+    if (awaitingNavTimeoutRef.current) {
+      clearTimeout(awaitingNavTimeoutRef.current);
+      awaitingNavTimeoutRef.current = null;
+    }
+    if (awaitingNavKeyRef.current) {
+      console.log('[WebViewShell] nav loading done ←', reason);
+      awaitingNavKeyRef.current = null;
+    }
+    setLoading(false);
+  }, []);
+
+  const releaseLoadingIfIdle = useCallback(() => {
+    if (!awaitingNavKeyRef.current) {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    onChromeStateChangeRef.current?.({
+      loading,
+      hasError: !!error,
+      currentPath: reportedPath,
+    });
+  }, [loading, error, reportedPath]);
+
+  const beginAwaitingNav = useCallback((key: string) => {
+    awaitingNavKeyRef.current = key;
+    setLoading(true);
+    if (awaitingNavTimeoutRef.current) {
+      clearTimeout(awaitingNavTimeoutRef.current);
+    }
+    // Fallback: não prender o loading se a web não responder
+    awaitingNavTimeoutRef.current = setTimeout(() => {
+      if (awaitingNavKeyRef.current === key) {
+        clearAwaitingNav('timeout');
+      }
+    }, 4500);
+  }, [clearAwaitingNav]);
+
+  const injectPendingNavigate = useCallback(
+    (source: string) => {
+      const path = pendingPathRef.current;
+      const nonce = pendingPathNonceRef.current;
+      if (!path || !webViewRef.current || !webViewReadyAtRef.current) return;
+      const key = `${nonce}:${path}`;
+      if (lastInjectedNavKeyRef.current === key) {
+        console.log('[WebViewShell] skip inject (already)', source, path);
+        return;
+      }
+      lastInjectedNavKeyRef.current = key;
+      // Loading só começa se a web confirmar que precisa navegar (nativeNavStart).
+      // Se já estiver na rota, nativeNavComplete chega com skipped=true sem reload.
+      console.log('[WebViewShell] inject navigate ←', source, path);
+      webViewRef.current.injectJavaScript(buildNavigateInjectScript(path));
+    },
+    [],
+  );
+
   useEffect(() => {
     pendingPathRef.current = pendingPath;
-    if (pendingPath && webViewRef.current && webViewReadyAtRef.current) {
-      const path = pendingPath;
-      pendingPathRef.current = null;
-      webViewRef.current.injectJavaScript(`
-        (function() {
-          try {
-            var path = ${JSON.stringify(path)};
-            if (typeof window.navigate === 'function') { window.navigate(path); }
-            else {
-              window.history.pushState({}, '', path);
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }
-          } catch (e) {}
-        })();
-        true;
-      `);
-    }
-  }, [pendingPath]);
+    pendingPathNonceRef.current = pendingPathNonce;
+    injectPendingNavigate('effect');
+  }, [pendingPath, pendingPathNonce, injectPendingNavigate]);
+
+  useEffect(() => {
+    return () => {
+      if (awaitingNavTimeoutRef.current) {
+        clearTimeout(awaitingNavTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const hydrateWebViewSession = (payload?: AuthSessionPayload | null) => {
     const next = payload ?? sessionPayloadRef.current;
@@ -991,6 +1075,16 @@ const WebViewShell = ({
         data.access_token &&
         data.refresh_token
       ) {
+        // Dedupe: a SPA pode emitir auth.session várias vezes (getSession + SIGNED_IN)
+        const token = String(data.access_token);
+        if (lastAuthBridgeTokenRef.current === token && data.type === 'auth.session') {
+          return;
+        }
+        lastAuthBridgeTokenRef.current = token;
+        console.log('[WebViewShell] auth bridge → native', {
+          type: data.type,
+          userId: data.user?.id,
+        });
         onRemoteSession?.({
           access_token: data.access_token,
           refresh_token: data.refresh_token,
@@ -1009,6 +1103,45 @@ const WebViewShell = ({
       else if (data.type === 'logout' || data.type === 'auth.logout') {
         onRemoteLogout?.();
       }
+      else if (data.type === 'closeWeb') {
+        console.log('[WebViewShell] closeWeb from web', data.reason);
+        onCloseWeb?.(
+          typeof data.reason === 'string' ? data.reason : 'web-close',
+        );
+      }
+      else if (data.type === 'nativeNavStart') {
+        const target =
+          typeof data.path === 'string' ? data.path : pendingPathRef.current;
+        if (target) {
+          const key = `${pendingPathNonceRef.current}:${target}`;
+          console.log('[WebViewShell] nativeNavStart', target);
+          beginAwaitingNav(key);
+        }
+      }
+      else if (data.type === 'nativeNavComplete') {
+        const target =
+          typeof data.path === 'string' ? data.path : pendingPathRef.current;
+        const key = target
+          ? `${pendingPathNonceRef.current}:${target}`
+          : awaitingNavKeyRef.current;
+        const current =
+          typeof data.current === 'string'
+            ? data.current
+            : extractAppPath(String(data.current || ''));
+        if (current) setReportedPath(current);
+        else if (typeof data.path === 'string') setReportedPath(data.path);
+        console.log('[WebViewShell] nativeNavComplete', {
+          path: data.path,
+          matched: data.matched,
+          skipped: data.skipped,
+          current: data.current,
+        });
+        if (!key || awaitingNavKeyRef.current === key || !awaitingNavKeyRef.current) {
+          clearAwaitingNav(
+            data.skipped ? 'already-on-path' : 'nativeNavComplete',
+          );
+        }
+      }
       else if (data.type === 'webviewReady' || data.type === 'pageFullyLoaded') {
         webViewReadyAtRef.current = Date.now();
         const readyMs = webViewReadyAtRef.current - bootStartedAtRef.current;
@@ -1017,24 +1150,14 @@ const WebViewShell = ({
           message: 'webview_ready_ms',
           data: {webview_ready_ms: readyMs},
         });
-        hydrateWebViewSession();
-        if (pendingPathRef.current && webViewRef.current) {
-          const path = pendingPathRef.current;
-          pendingPathRef.current = null;
-          webViewRef.current.injectJavaScript(`
-            (function() {
-              try {
-                var path = ${JSON.stringify(path)};
-                if (typeof window.navigate === 'function') { window.navigate(path); }
-                else {
-                  window.history.pushState({}, '', path);
-                  window.dispatchEvent(new PopStateEvent('popstate'));
-                }
-              } catch (e) {}
-            })();
-            true;
-          `);
+        // Hydrate só na 1ª vez — re-hydrate a cada pageFullyLoaded causa loop de auth.session
+        if (!didHydrateOnReadyRef.current) {
+          didHydrateOnReadyRef.current = true;
+          hydrateWebViewSession();
         }
+        injectPendingNavigate(data.type);
+        // Se não há navegação pendente, libera o loading; senão espera nativeNavComplete
+        releaseLoadingIfIdle();
         onReady?.();
       }
       // Verificar se o gesto do iOS foi simulado com sucesso
@@ -1161,6 +1284,8 @@ const WebViewShell = ({
       
       // Detectar se estamos na página de chat
       const url = navState.url;
+      const path = extractAppPath(url);
+      if (path) setReportedPath(path);
       const isChatPage = url.includes('/app/chat/') || (url.includes('/app/chats/') && !!url.match(/\/app\/chats\/[^/]+$/));
       setIsInChatPage(isChatPage);
       
@@ -1172,9 +1297,8 @@ const WebViewShell = ({
       if (navState.loading) {
         // Já está indicado como carregando, não precisa fazer nada
       } else {
-        // Se não está carregando mas o estado de loading ainda está ativo, desativar
-        // Este é um fix específico para problemas de loading infinito no Android
-        setLoading(false);
+        // Não derruba o loading de navegação SPA pendente
+        releaseLoadingIfIdle();
       }
     } catch (error) {
       Sentry.captureException(error, {
@@ -1188,8 +1312,8 @@ const WebViewShell = ({
   // Handler quando o WebView terminar de carregar
   const handleLoadEnd = () => {
     try {
-      // Desativar o loading imediatamente
-      setLoading(false);
+      // Não derruba o loading de navegação SPA pendente
+      releaseLoadingIfIdle();
       setInitialUrlLoaded(true);
       setIsWebViewVisible(true);
 

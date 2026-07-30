@@ -23,7 +23,11 @@ type Props = {
   textColor: string;
   trackColor: string;
   fillColor: string;
+  /** Reemite o long press da bolha — sem isso os controles engolem o gesto. */
+  onLongPress?: () => void;
 };
+
+const LONG_PRESS_DELAY = 320;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -38,6 +42,7 @@ export function ChatAudioPlayer({
   textColor,
   trackColor,
   fillColor,
+  onLongPress,
 }: Props) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -227,6 +232,8 @@ export function ChatAudioPlayer({
       <Pressable
         style={[styles.playBtn, {backgroundColor: fillColor}]}
         onPress={() => void togglePlay()}
+        onLongPress={onLongPress}
+        delayLongPress={LONG_PRESS_DELAY}
         disabled={loading && !playing}>
         {loading && !playing ? (
           <ActivityIndicator size="small" color={accentColor} />
@@ -242,6 +249,8 @@ export function ChatAudioPlayer({
           style={[styles.track, {backgroundColor: trackColor}]}
           onLayout={e => setTrackWidth(e.nativeEvent.layout.width)}
           onPress={e => seekTo(e.nativeEvent.locationX)}
+          onLongPress={onLongPress}
+          delayLongPress={LONG_PRESS_DELAY}
           hitSlop={{top: 12, bottom: 12, left: 0, right: 0}}>
           <View
             style={[

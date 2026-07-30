@@ -1,10 +1,18 @@
-import React, {memo, useMemo, useRef, useState} from 'react';
+import React, {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   View,
   Text,
   Image,
   StyleSheet,
-  TouchableOpacity,
   Pressable,
   Linking,
   Modal,
@@ -39,10 +47,13 @@ import {ImageViewerModal} from './ImageViewerModal';
 import {ChatAudioPlayer} from './ChatAudioPlayer';
 import {
   attachmentLabel,
+  CHAT_MEDIA_MAX_WIDTH,
+  CHAT_MEDIA_PROBE_PLACEHOLDER,
   extractContactInfo,
   extractLocation,
   formatMessageTime,
   getAttachments,
+  getConstrainedMediaSize,
   getInteractiveButtons,
   getMetadata,
   getSystemEventLabel,
@@ -60,6 +71,8 @@ export type BubbleTheme = {
   bubbleOut: string;
   bubbleIn: string;
   bubbleOutText: string;
+  bubbleOutBorder: string;
+  bubbleOutMuted: string;
   bubbleInText: string;
   bubbleInBorder: string;
   tertiaryLabel: string;
@@ -76,6 +89,11 @@ type Props = {
   pinned?: boolean;
   /** Esconde a bolha da lista enquanto o overlay está aberto */
   hidden?: boolean;
+  /**
+   * Espaço depois da bolha (em direção às msgs mais novas / baixo na tela).
+   * No inverted, o gap de troca de lado vai na ÚLTIMA msg do grupo antigo.
+   */
+  spacingAfter?: number;
   onLongPress?: (message: ChatMessage, anchor: MessageAnchor) => void;
 };
 
@@ -84,33 +102,146 @@ function openUrl(url?: string | null) {
   void Linking.openURL(url).catch(() => undefined);
 }
 
+const LONG_PRESS_DELAY = 320;
+
+/**
+ * Um Pressable filho vira o responder do toque e engole o long press da bolha.
+ * A bolha publica aqui o gatilho para os controles internos reemitirem o menu.
+ */
+const BubbleLongPressContext = createContext<(() => void) | null>(null);
+
+/** Pressable de mídia dentro da bolha que preserva o long press do menu. */
+function MediaPressable({
+  onPress,
+  disabled,
+  style,
+  accessibilityRole,
+  children,
+}: {
+  onPress?: () => void;
+  disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
+  accessibilityRole?: 'button' | 'imagebutton';
+  children: React.ReactNode;
+}) {
+  const longPress = useContext(BubbleLongPressContext);
+  return (
+    <Pressable
+      onPress={onPress}
+      onLongPress={longPress ?? undefined}
+      delayLongPress={LONG_PRESS_DELAY}
+      disabled={disabled}
+      accessibilityRole={accessibilityRole}
+      style={({pressed}) => [style, pressed && styles.mediaPressed]}>
+      {children}
+    </Pressable>
+  );
+}
+
 function ImageAttachmentPreview({
   url,
   isSticker,
   out,
+  width,
+  height,
 }: {
   url: string;
   isSticker: boolean;
   out?: boolean;
+  width?: number | null;
+  height?: number | null;
 }) {
+  const {width: windowWidth} = useWindowDimensions();
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [probed, setProbed] = useState<{width: number; height: number} | null>(
+    null,
+  );
+
+  const hasKnownSize =
+    typeof width === 'number' &&
+    width > 0 &&
+    typeof height === 'number' &&
+    height > 0;
+
+  useEffect(() => {
+    if (hasKnownSize) {
+      setProbed(null);
+      return;
+    }
+    let cancelled = false;
+    Image.getSize(
+      url,
+      (w, h) => {
+        if (!cancelled && w > 0 && h > 0) {
+          setProbed({width: w, height: h});
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [url, hasKnownSize, width, height]);
+
+  const natural = hasKnownSize
+    ? {width: width!, height: height!}
+    : probed;
+  // Bolha tem maxWidth 78% — não deixar a imagem estourar a borda direita
+  const bubbleInnerMax = Math.max(
+    120,
+    Math.floor(windowWidth * 0.78) - 6,
+  );
+  const maxSide = isSticker
+    ? Math.min(140, bubbleInnerMax)
+    : Math.min(CHAT_MEDIA_MAX_WIDTH, bubbleInnerMax);
+  const displaySize = natural
+    ? getConstrainedMediaSize(natural.width, natural.height, maxSide, maxSide)
+    : isSticker
+      ? {width: Math.min(140, maxSide), height: Math.min(140, maxSide)}
+      : getConstrainedMediaSize(
+          CHAT_MEDIA_PROBE_PLACEHOLDER.width,
+          CHAT_MEDIA_PROBE_PLACEHOLDER.height,
+          maxSide,
+          maxSide,
+        );
 
   return (
     <>
-      <Pressable
+      <MediaPressable
         onPress={() => setViewerOpen(true)}
         accessibilityRole="imagebutton"
-        style={!isSticker && (out ? styles.mediaOutClip : styles.mediaInClip)}>
+        style={
+          !isSticker
+            ? [
+                out ? styles.mediaOutClip : styles.mediaInClip,
+                {
+                  width: displaySize.width,
+                  height: displaySize.height,
+                  maxWidth: '100%',
+                },
+              ]
+            : undefined
+        }>
         <Image
           source={{uri: url}}
           style={
             isSticker
-              ? styles.sticker
-              : [styles.media, out ? styles.mediaOut : styles.mediaIn]
+              ? [
+                  styles.sticker,
+                  {width: displaySize.width, height: displaySize.height},
+                ]
+              : [
+                  styles.media,
+                  out ? styles.mediaOut : styles.mediaIn,
+                  {
+                    width: '100%',
+                    height: '100%',
+                  },
+                ]
           }
           resizeMode={isSticker ? 'contain' : 'cover'}
         />
-      </Pressable>
+      </MediaPressable>
       <ImageViewerModal
         visible={viewerOpen}
         uri={url}
@@ -137,7 +268,7 @@ function MessageMeta({
   const timeColor = privateNote
     ? 'rgba(146, 64, 14, 0.7)'
     : out
-      ? 'rgba(255,255,255,0.75)'
+      ? theme.bubbleOutMuted
       : theme.tertiaryLabel;
 
   const wrapStyle =
@@ -160,8 +291,8 @@ function MessageMeta({
         {out && !privateNote ? (
           <MessageStatusTicks
             status={item.status}
-            mutedColor="rgba(255,255,255,0.75)"
-            readColor="#FFFFFF"
+            mutedColor={theme.bubbleOutMuted}
+            readColor={brand.blue}
           />
         ) : null}
       </View>
@@ -455,6 +586,7 @@ function AttachmentBlock({
   theme: BubbleTheme;
   labels: {openAudio: string; openVideo: string; openFile: string; mediaAbsent: string};
 }) {
+  const longPress = useContext(BubbleLongPressContext);
   const url = attachment.url || attachment.preview_url;
   const textColor = out ? theme.bubbleOutText : theme.bubbleInText;
   const muted = out ? 'rgba(255,255,255,0.75)' : theme.tertiaryLabel;
@@ -478,21 +610,23 @@ function AttachmentBlock({
         url={url}
         isSticker={isSticker}
         out={out}
+        width={attachment.width}
+        height={attachment.height}
       />
     );
   }
 
   if (type === 'video' || isVideoAttachment(attachment)) {
     return (
-      <TouchableOpacity
+      <MediaPressable
         style={[styles.mediaAction, {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill}]}
         onPress={() => openUrl(url)}
-        activeOpacity={0.8}>
+        accessibilityRole="button">
         <Video size={22} color={textColor} />
         <Text style={[styles.mediaActionText, {color: textColor}]}>
           {labels.openVideo}
         </Text>
-      </TouchableOpacity>
+      </MediaPressable>
     );
   }
 
@@ -505,15 +639,16 @@ function AttachmentBlock({
         textColor={out ? 'rgba(255,255,255,0.85)' : theme.secondaryLabel}
         trackColor={out ? 'rgba(255,255,255,0.28)' : theme.fill}
         fillColor={out ? 'rgba(255,255,255,0.2)' : brand.blueSoft}
+        onLongPress={longPress ?? undefined}
       />
     );
   }
 
   return (
-    <TouchableOpacity
+    <MediaPressable
       style={[styles.docChip, {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill}]}
       onPress={() => openUrl(url)}
-      activeOpacity={0.8}>
+      accessibilityRole="button">
       <FileText size={18} color={textColor} />
       <Text
         style={[styles.docName, {color: textColor}]}
@@ -521,7 +656,7 @@ function AttachmentBlock({
         {attachmentLabel(attachment)}
       </Text>
       <Text style={[styles.docHint, {color: muted}]}>{labels.openFile}</Text>
-    </TouchableOpacity>
+    </MediaPressable>
   );
 }
 
@@ -594,17 +729,18 @@ function BubbleShell({
   const borderColor = privateNote
     ? 'rgba(245, 158, 11, 0.45)'
     : out
-      ? 'transparent'
+      ? theme.bubbleOutBorder
       : theme.bubbleInBorder;
 
   const hasReactions = reactions && Object.keys(reactions).length > 0;
 
-  const playLongPressFeedback = () => {
+  const playLongPressFeedback = useCallback(() => {
+    if (!onLongPress) return;
     hapticLongPress();
     wrapRef.current?.measureInWindow((x, y, width, height) => {
-      onLongPress?.({x, y, width, height});
+      onLongPress({x, y, width, height});
     });
-  };
+  }, [onLongPress]);
 
   return (
     <Pressable
@@ -616,7 +752,7 @@ function BubbleShell({
         hasReactions && styles.bubbleWrapWithReactions,
       ]}
       onLongPress={onLongPress ? playLongPressFeedback : undefined}
-      delayLongPress={320}>
+      delayLongPress={LONG_PRESS_DELAY}>
       <View
         style={[
           styles.bubble,
@@ -624,12 +760,14 @@ function BubbleShell({
           {
             backgroundColor: bg,
             borderColor,
-            borderWidth:
-              out && !privateNote ? 0 : StyleSheet.hairlineWidth * 2,
+            borderWidth: StyleSheet.hairlineWidth * 2,
           },
           style,
         ]}>
-        {children}
+        <BubbleLongPressContext.Provider
+          value={onLongPress ? playLongPressFeedback : null}>
+          {children}
+        </BubbleLongPressContext.Provider>
       </View>
       {reactions ? <ReactionBadges reactions={reactions} out={out || !!privateNote} /> : null}
     </Pressable>
@@ -641,6 +779,7 @@ export const MessageBubble = memo(function MessageBubble({
   theme,
   pinned,
   hidden,
+  spacingAfter = 2,
   onLongPress,
 }: Props) {
   const {t} = useI18n();
@@ -691,14 +830,22 @@ export const MessageBubble = memo(function MessageBubble({
     [t],
   );
 
-  const maybeHide = (node: React.ReactElement) =>
-    hidden ? (
-      <View style={styles.hiddenBubble} pointerEvents="none">
+  const maybeHide = (node: React.ReactElement) => {
+    // Gap na msg que fecha o grupo (vizinha mais nova do outro lado),
+    // para ficar ANTES da 1ª do tipo novo — não abaixo dela.
+    const spaced = (
+      <View style={spacingAfter > 0 ? {marginBottom: spacingAfter} : undefined}>
         {node}
       </View>
-    ) : (
-      node
     );
+    return hidden ? (
+      <View style={styles.hiddenBubble} pointerEvents="none">
+        {spaced}
+      </View>
+    ) : (
+      spaced
+    );
+  };
 
   if (type === 'deleted') {
     return maybeHide(
@@ -887,14 +1034,14 @@ export const MessageBubble = memo(function MessageBubble({
         <BubbleContentRow
           out={out}
           meta={<MessageMeta item={item} out={out} theme={theme} />}>
-          <TouchableOpacity
-            activeOpacity={0.85}
+          <MediaPressable
             onPress={() => openUrl(mapsUrl)}
-            disabled={!mapsUrl}>
+            disabled={!mapsUrl}
+            accessibilityRole="button">
             {thumb ? (
               <Image
                 source={{uri: thumb}}
-                style={styles.media}
+                style={[styles.media, styles.locationThumb]}
                 resizeMode="cover"
               />
             ) : (
@@ -913,7 +1060,7 @@ export const MessageBubble = memo(function MessageBubble({
                 </Text>
               </View>
             )}
-          </TouchableOpacity>
+          </MediaPressable>
           {(location?.name || location?.address || item.content) && (
             <MarkdownText
               content={
@@ -922,7 +1069,7 @@ export const MessageBubble = memo(function MessageBubble({
                   .join('\n') || ''
               }
               color={textColor}
-              linkColor={out ? '#BFDBFE' : brand.blue}
+              linkColor={brand.blue}
               style={[styles.bubbleText, styles.contentAfterMedia]}
             />
           )}
@@ -972,7 +1119,7 @@ export const MessageBubble = memo(function MessageBubble({
               <MarkdownText
                 content={item.content || ''}
                 color={textColor}
-                linkColor={out ? '#BFDBFE' : brand.blue}
+                linkColor={brand.blue}
                 style={[styles.bubbleText, styles.contentAfterMedia]}
               />
               <View style={!out ? styles.customerMetaPadIn : undefined}>
@@ -1110,7 +1257,7 @@ export const MessageBubble = memo(function MessageBubble({
                 <MarkdownText
                   content={templateParts.body}
                   color={textColor}
-                  linkColor={out ? '#BFDBFE' : brand.blue}
+                  linkColor={brand.blue}
                   style={styles.bubbleText}
                 />
               ) : null}
@@ -1134,7 +1281,7 @@ export const MessageBubble = memo(function MessageBubble({
             <MarkdownText
               content={item.content || ''}
               color={textColor}
-              linkColor={out ? '#BFDBFE' : brand.blue}
+              linkColor={brand.blue}
               style={styles.bubbleText}
             />
           ) : null}
@@ -1143,7 +1290,7 @@ export const MessageBubble = memo(function MessageBubble({
             <MarkdownText
               content={caption}
               color={textColor}
-              linkColor={out ? '#BFDBFE' : brand.blue}
+              linkColor={brand.blue}
               style={[
                 styles.bubbleText,
                 styles.contentAfterMedia,
@@ -1212,7 +1359,7 @@ export const MessageBubble = memo(function MessageBubble({
               styles.buttonsFooter,
               {
                 borderTopColor: out
-                  ? 'rgba(255,255,255,0.25)'
+                  ? theme.bubbleOutBorder
                   : theme.bubbleInBorder,
               },
             ]}>
@@ -1224,14 +1371,14 @@ export const MessageBubble = memo(function MessageBubble({
                   index < buttons.length - 1 && {
                     borderBottomWidth: StyleSheet.hairlineWidth * 2,
                     borderBottomColor: out
-                      ? 'rgba(255,255,255,0.2)'
+                      ? theme.bubbleOutBorder
                       : theme.bubbleInBorder,
                   },
                 ]}>
                 <Text
                   style={[
                     styles.buttonText,
-                    {color: out ? '#BFDBFE' : brand.blue},
+                    {color: brand.blue},
                   ]}>
                   {btn.title}
                 </Text>
@@ -1245,14 +1392,14 @@ export const MessageBubble = memo(function MessageBubble({
 });
 
 const styles = StyleSheet.create({
-  bubbleWrap: {marginBottom: 4, maxWidth: '78%'},
+  bubbleWrap: {marginBottom: 0, maxWidth: '78%'},
   bubbleWrapPinned: {
     maxWidth: '100%',
     width: '100%',
     marginBottom: 0,
     alignSelf: 'stretch',
   },
-  bubbleWrapWithReactions: {marginBottom: 12},
+  bubbleWrapWithReactions: {marginBottom: 10},
   bubbleWrapOut: {alignSelf: 'flex-end'},
   bubbleWrapIn: {alignSelf: 'flex-start'},
   hiddenBubble: {opacity: 0},
@@ -1386,9 +1533,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   // Radius interno acompanha a bolha (lg=16, pad imagem=1 → ~15; canto da cauda=6 → ~5)
+  // width/height vêm de getConstrainedMediaSize (attachment.width/height)
   media: {
-    width: 220,
-    height: 160,
     borderRadius: radii.lg - 1,
     marginBottom: 0,
   },
@@ -1409,9 +1555,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   sticker: {
-    width: 140,
-    height: 140,
     marginBottom: 0,
+  },
+  locationThumb: {
+    width: 220,
+    height: 140,
   },
   mediaAction: {
     minWidth: 200,
@@ -1438,6 +1586,9 @@ const styles = StyleSheet.create({
   },
   mediaAbsentText: {
     fontSize: typography.footnote,
+  },
+  mediaPressed: {
+    opacity: 0.85,
   },
   docChip: {
     minWidth: 180,
@@ -1469,7 +1620,7 @@ const styles = StyleSheet.create({
   },
   systemWrap: {
     alignItems: 'center',
-    marginVertical: 6,
+    marginVertical: 0,
     paddingHorizontal: spacing.md,
   },
   systemChip: {
@@ -1484,7 +1635,7 @@ const styles = StyleSheet.create({
   },
   contextWrap: {
     alignSelf: 'stretch',
-    marginVertical: 6,
+    marginVertical: 0,
     paddingHorizontal: spacing.md,
   },
   contextCollapsed: {

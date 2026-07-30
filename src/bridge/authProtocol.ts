@@ -15,10 +15,42 @@ export type AuthBridgeMessageType =
   | 'iosGestureSimulated'
   | 'navigateNative'
   | 'openWeb'
+  | 'closeWeb'
+  | 'nativeNavStart'
+  | 'nativeNavComplete'
   | 'webviewReady'
   | 'error'
   | 'renderError'
   | 'pageshow';
+
+/** Extrai pathname+search de URL completa ou path relativo. */
+export function extractAppPath(pathOrUrl: string | null | undefined): string | null {
+  if (!pathOrUrl) return null;
+  try {
+    if (pathOrUrl.includes('://')) {
+      const u = new URL(pathOrUrl);
+      return `${u.pathname}${u.search}`;
+    }
+    return pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+  } catch {
+    return pathOrUrl;
+  }
+}
+
+/** Paths com chrome embutido na web (sem botão flutuante ← App). */
+export function isEmbeddedWebChromePath(pathOrUrl: string | null | undefined): boolean {
+  if (!pathOrUrl) return false;
+  try {
+    const path = extractAppPath(pathOrUrl) || pathOrUrl;
+    return (
+      /\/app\/customers\/[^/]+\/edit(?:\/|\?|$)/.test(path) ||
+      /\/app\/chats(?:\/|\?|$)/.test(path) ||
+      /\/app\/chat\/[^/?#]+/.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export interface AuthSessionPayload {
   access_token: string;
@@ -91,17 +123,72 @@ export function buildNavigateInjectScript(path: string): string {
   const safePath = JSON.stringify(path);
   return `
     (function() {
+      function notify(matched, skipped) {
+        try {
+          if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'nativeNavComplete',
+              path: ${safePath},
+              current: window.location.pathname + window.location.search,
+              matched: !!matched,
+              skipped: !!skipped
+            }));
+          }
+        } catch (_) {}
+      }
+      function notifyStart() {
+        try {
+          if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'nativeNavStart',
+              path: ${safePath}
+            }));
+          }
+        } catch (_) {}
+      }
+      function normFull(p) {
+        if (!p) return '';
+        var qIdx = p.indexOf('?');
+        var pathname = qIdx >= 0 ? p.slice(0, qIdx) : p;
+        var search = qIdx >= 0 ? p.slice(qIdx) : '';
+        if (pathname.length > 1 && pathname.charAt(pathname.length - 1) === '/') {
+          pathname = pathname.slice(0, -1);
+        }
+        // Inclui search: /app/chats?filter=a ≠ /app/chats?filter=b
+        return pathname + search;
+      }
+      function pathMatches(target) {
+        var nowFull = window.location.pathname + window.location.search;
+        return normFull(nowFull) === normFull(target);
+      }
       try {
         var path = ${safePath};
+        // Já está na rota: não navega nem recarrega
+        if (pathMatches(path)) {
+          notify(true, true);
+          true;
+          return;
+        }
+        notifyStart();
         if (typeof window.navigate === 'function') {
           window.navigate(path);
         } else {
-          window.history.pushState({}, '', path);
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          window.dispatchEvent(new CustomEvent('onesignal_navigation', {
+            detail: { url: path }
+          }));
         }
+        // Aguarda o React Router pintar a rota (sem hard reload)
+        var tries = 0;
+        var timer = setInterval(function() {
+          tries += 1;
+          if (pathMatches(path) || tries >= 24) {
+            clearInterval(timer);
+            notify(pathMatches(path), false);
+          }
+        }, 50);
         true;
       } catch (e) {
-        try { window.location.href = path; } catch (_) {}
+        notify(false, false);
         false;
       }
     })();

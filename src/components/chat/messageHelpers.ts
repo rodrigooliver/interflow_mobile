@@ -15,7 +15,39 @@ export type MessageAttachment = {
   file_name?: string;
   mime_type?: string | null;
   preview_url?: string;
+  /** Dimensões naturais (mesma estrutura da web) — usadas no layout da bolha. */
+  width?: number | null;
+  height?: number | null;
 };
+
+/** Limites de exibição de mídia no chat — alinhados à web (MessageBubble). */
+export const CHAT_MEDIA_MAX_WIDTH = 320;
+export const CHAT_MEDIA_MAX_HEIGHT = 320;
+export const CHAT_MEDIA_PROBE_PLACEHOLDER = {
+  width: CHAT_MEDIA_MAX_WIDTH,
+  height: CHAT_MEDIA_MAX_HEIGHT,
+};
+
+/** Escala para ≤ max preservando proporção (nunca amplia). */
+export function getConstrainedMediaSize(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxWidth = CHAT_MEDIA_MAX_WIDTH,
+  maxHeight = CHAT_MEDIA_MAX_HEIGHT,
+): {width: number; height: number} {
+  if (!naturalWidth || !naturalHeight) {
+    return {width: maxWidth, height: maxHeight};
+  }
+
+  const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight, 1);
+  const width = Math.max(1, Math.min(maxWidth, Math.floor(naturalWidth * scale)));
+  const height = Math.max(
+    1,
+    Math.min(maxHeight, Math.round((width * naturalHeight) / naturalWidth)),
+  );
+
+  return {width, height};
+}
 
 export type LocationData = {
   latitude?: number;
@@ -112,6 +144,63 @@ export function isAudioAttachment(att: MessageAttachment): boolean {
 
 export function attachmentLabel(att: MessageAttachment): string {
   return att.name || att.file_name || 'arquivo';
+}
+
+export type DownloadableKind = 'image' | 'video' | 'audio' | 'file';
+
+export type DownloadableMedia = {
+  url: string;
+  name?: string;
+  mimeType?: string | null;
+  kind: DownloadableKind;
+};
+
+/** Tipos de mensagem com mídia baixável — espelha a web (hasDownloadableMedia). */
+const DOWNLOADABLE_TYPES = new Set([
+  'image',
+  'video',
+  'audio',
+  'document',
+  'file',
+  'sticker',
+]);
+
+/** Primeiro anexo baixável da mensagem, já classificado por tipo de mídia. */
+export function getDownloadableMedia(msg: ChatMessage): DownloadableMedia | null {
+  const att = getAttachments(msg).find(a => a.url || a.preview_url);
+  if (!att) return null;
+
+  const url = att.url || att.preview_url;
+  if (!url) return null;
+
+  const messageType = (msg.type || '').toLowerCase();
+  const attachmentType = (att.type || '').toLowerCase();
+  const isImage = isImageAttachment(att) || messageType === 'image' || messageType === 'sticker';
+  const isVideo = isVideoAttachment(att) || messageType === 'video';
+  const isAudio = isAudioAttachment(att) || messageType === 'audio';
+
+  const downloadable =
+    isImage ||
+    isVideo ||
+    isAudio ||
+    DOWNLOADABLE_TYPES.has(messageType) ||
+    DOWNLOADABLE_TYPES.has(attachmentType);
+  if (!downloadable) return null;
+
+  const kind: DownloadableKind = isImage
+    ? 'image'
+    : isVideo
+      ? 'video'
+      : isAudio
+        ? 'audio'
+        : 'file';
+
+  return {
+    url,
+    name: att.name || att.file_name,
+    mimeType: att.mime_type || att.type,
+    kind,
+  };
 }
 
 function parseVCard(vcard: string): ContactInfo | null {

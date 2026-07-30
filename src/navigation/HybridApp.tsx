@@ -21,7 +21,11 @@ import {MainTabs} from './MainTabs';
 import WebViewShell from '../webview/WebViewShell';
 import {LoadingScreen, loadingBackground} from '../components/LoadingScreen';
 import type {AuthSessionPayload} from '../bridge/authProtocol';
-import {extractChatIdFromPath, isChatPath} from '../bridge/authProtocol';
+import {
+  extractChatIdFromPath,
+  isChatPath,
+  isEmbeddedWebChromePath,
+} from '../bridge/authProtocol';
 import env from '../config/env';
 import type {ChatUIMode} from '../config/env';
 import {colors, radii, spacing} from '../theme/tokens';
@@ -31,7 +35,7 @@ import type {ChatMessage} from '../services/chatsApi';
 
 export type HybridStackParamList = {
   MainTabs: undefined;
-  ChatThread: {chatId: string; title?: string};
+  ChatThread: {chatId: string; title?: string; refreshKey?: number};
   MessageDetails: {
     chatId: string;
     message: ChatMessage;
@@ -58,9 +62,18 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
 
   const [webVisible, setWebVisible] = useState(false);
   const [webPath, setWebPath] = useState<string | null>(null);
+  /** Força re-navegação mesmo quando o path é o mesmo de antes */
+  const [webPathNonce, setWebPathNonce] = useState(0);
   const [webReady, setWebReady] = useState(false);
+  const [webChrome, setWebChrome] = useState<{
+    loading: boolean;
+    hasError: boolean;
+    currentPath: string | null;
+  }>({loading: false, hasError: false, currentPath: null});
   const swapStartedAtRef = useRef<number | null>(null);
   const onesignalReady = useRef(false);
+  /** true quando o usuário abriu o WebView para navegar (cliente, settings…), não login */
+  const webBrowseModeRef = useRef(false);
 
   useEffect(() => {
     if (!loading) {
@@ -105,66 +118,172 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
   const [pendingNativeChat, setPendingNativeChat] = useState<string | null>(null);
   const navigationRef = useRef<any>(null);
 
+  /** Abre thread nativa; com reload força refetch mesmo se já estiver no mesmo chat. */
+  const openNativeChat = useCallback(
+    (
+      chatId: string,
+      options?: {title?: string; reload?: boolean},
+    ) => {
+      const nav = navigationRef.current;
+      if (!nav) return;
+      const refreshKey = options?.reload ? Date.now() : undefined;
+      const current = nav.getCurrentRoute?.();
+      const currentParams = current?.params as
+        | HybridStackParamList['ChatThread']
+        | undefined;
+      if (
+        current?.name === 'ChatThread' &&
+        currentParams?.chatId === chatId
+      ) {
+        if (refreshKey != null) {
+          nav.setParams({refreshKey});
+        }
+        return;
+      }
+      nav.navigate('ChatThread', {
+        chatId,
+        title: options?.title,
+        ...(refreshKey != null ? {refreshKey} : {}),
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (pendingNativeChat && navigationRef.current && session) {
-      navigationRef.current.navigate('ChatThread', {chatId: pendingNativeChat});
+      // Notificação: sempre reload — senão o mesmo chatId não refetch
+      openNativeChat(pendingNativeChat, {reload: true});
       setPendingNativeChat(null);
       pendingNativeChatRef.current = null;
     }
-  }, [pendingNativeChat, session]);
+  }, [pendingNativeChat, session, openNativeChat]);
 
   const sessionPayload = useMemo(
     () => getSessionPayload(),
     [getSessionPayload, session],
   );
 
+  const webPathRef = useRef<string | null>(null);
+  const webCurrentPathRef = useRef<string | null>(null);
+  const webVisibleRef = useRef(false);
+  webPathRef.current = webPath;
+  webCurrentPathRef.current = webChrome.currentPath;
+  webVisibleRef.current = webVisible;
+
   const openWeb = useCallback(
     (path: string) => {
+      const browse = path !== '/login' && !path.startsWith('/login?');
+      webBrowseModeRef.current = browse;
+      const normalize = (p: string | null | undefined) => {
+        if (!p) return '';
+        const qIdx = p.indexOf('?');
+        const pathname = qIdx >= 0 ? p.slice(0, qIdx) : p;
+        const search = qIdx >= 0 ? p.slice(qIdx) : '';
+        const base =
+          pathname.length > 1 && pathname.endsWith('/')
+            ? pathname.slice(0, -1)
+            : pathname;
+        // Inclui query: trocar ?filter= deve reinjetar navegação
+        return base + search;
+      };
+      const alreadyOnPath =
+        webVisibleRef.current &&
+        (normalize(webCurrentPathRef.current) === normalize(path) ||
+          normalize(webPathRef.current) === normalize(path));
+
+      console.log('[HybridApp] openWeb', {path, browse, alreadyOnPath});
       swapStartedAtRef.current = Date.now();
-      setWebPath(null);
-      requestAnimationFrame(() => {
+      setWebVisible(true);
+
+      // Já está na mesma página (path+query): só traz o WebView à frente
+      if (alreadyOnPath) {
         setWebPath(path);
-        setWebVisible(true);
-        if (webReady && swapStartedAtRef.current) {
-          Sentry.addBreadcrumb({
-            category: 'webview',
-            message: 'webview_swap_ms',
-            data: {
-              webview_swap_ms: Date.now() - swapStartedAtRef.current,
-              warm: true,
-            },
-          });
-        }
-      });
+        return;
+      }
+
+      setWebPath(path);
+      setWebPathNonce(n => n + 1);
+      if (webReady && swapStartedAtRef.current) {
+        Sentry.addBreadcrumb({
+          category: 'webview',
+          message: 'webview_swap_ms',
+          data: {
+            webview_swap_ms: Date.now() - swapStartedAtRef.current,
+            warm: true,
+          },
+        });
+      }
     },
     [webReady],
   );
 
-  const closeWeb = useCallback(() => {
+  const closeWeb = useCallback((reason = 'manual') => {
+    console.log('[HybridApp] closeWeb', {
+      reason,
+      browse: webBrowseModeRef.current,
+      path: webPath,
+    });
+    webBrowseModeRef.current = false;
     setWebVisible(false);
     setWebPath(null);
-  }, []);
+  }, [webPath]);
 
   useEffect(() => {
     if (!webVisible || Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      closeWeb();
+      closeWeb('android-back');
       return true;
     });
     return () => sub.remove();
   }, [webVisible, closeWeb]);
 
+  const lastRemoteAccessTokenRef = useRef<string | null>(null);
+
+  // Evita tratar eco da WebView aquecida como "novo login"
+  useEffect(() => {
+    if (session?.access_token) {
+      lastRemoteAccessTokenRef.current = session.access_token;
+    }
+  }, [session?.access_token]);
+
   const handleRemoteSession = useCallback(
     async (payload: AuthSessionPayload) => {
+      const browsing = webBrowseModeRef.current;
+      const sameToken =
+        !!payload.access_token &&
+        payload.access_token === lastRemoteAccessTokenRef.current;
+      console.log('[HybridApp] remoteSession', {
+        browsing,
+        sameToken,
+        userId: payload.user?.id,
+      });
+
+      // Mesmo JWT: eco do bridge (getSession / SIGNED_IN pós-hydrate).
+      // Não reaplicar nem closeWeb — isso gerava loop infinito.
+      if (sameToken) {
+        return;
+      }
+
+      lastRemoteAccessTokenRef.current = payload.access_token ?? null;
+
+      // Browse (cliente/settings): só espelha JWT, sem setSession nativo
+      if (browsing) {
+        const result = await mirrorWebSession(payload);
+        if (!result.ok) {
+          console.warn('[HybridApp] mirror JWT falhou:', result.error);
+        }
+        return;
+      }
+
       const result = await mirrorWebSession(payload);
       if (!result.ok) {
         console.warn('[HybridApp] mirror JWT falhou:', result.error);
       }
       await applyRemoteSession(payload);
-      setWebVisible(false);
-      setWebPath(null);
+      // Login web → volta pro app.
+      closeWeb('remote-session-after-login');
     },
-    [applyRemoteSession],
+    [applyRemoteSession, closeWeb],
   );
 
   const handleRemoteLogout = useCallback(async () => {
@@ -176,6 +295,28 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
 
   const needsWebLogin = !loading && !session;
   const showWeb = needsWebLogin || webVisible;
+
+  /** Precisa do ← App flutuante (loading/erro/página sem chrome). */
+  const needsFloatingAppBack =
+    showWeb &&
+    !!session &&
+    (webChrome.loading ||
+      webChrome.hasError ||
+      !isEmbeddedWebChromePath(webChrome.currentPath || webPath));
+
+  /** Só exibe após delay — se carregar rápido, não aparece. */
+  const [floatingAppBackVisible, setFloatingAppBackVisible] = useState(false);
+
+  useEffect(() => {
+    if (!needsFloatingAppBack) {
+      setFloatingAppBackVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setFloatingAppBackVisible(true);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [needsFloatingAppBack]);
 
   useEffect(() => {
     if (needsWebLogin) {
@@ -205,10 +346,7 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
               {() => (
                 <MainTabs
                   onOpenChat={(chatId, title) =>
-                    navigationRef.current?.navigate('ChatThread', {
-                      chatId,
-                      title,
-                    })
+                    openNativeChat(chatId, {title})
                   }
                   onOpenWeb={openWeb}
                   onSignOut={() => {
@@ -225,6 +363,7 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
                 <ChatThreadScreen
                   chatId={route.params.chatId}
                   title={route.params.title}
+                  refreshKey={route.params.refreshKey}
                   onBack={() => navigationRef.current?.goBack()}
                   onOpenWeb={openWeb}
                   onOpenMessageDetails={params =>
@@ -256,6 +395,7 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
           visible={showWeb}
           sessionPayload={sessionPayload}
           pendingPath={needsWebLogin ? '/login' : webPath}
+          pendingPathNonce={webPathNonce}
           onRemoteSession={handleRemoteSession}
           onRemoteLogout={handleRemoteLogout}
           nativeAuthEvent={lastAuthEvent}
@@ -274,24 +414,30 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
               swapStartedAtRef.current = null;
             }
           }}
+          onCloseWeb={reason => closeWeb(reason || 'web-close')}
+          onChromeStateChange={setWebChrome}
           onNativeChatNavigate={(chatId, path) => {
             if (!session) return false;
             if (chatId) {
-              closeWeb();
-              navigationRef.current?.navigate('ChatThread', {chatId});
+              console.log('[HybridApp] nativeChatNavigate', {chatId, path});
+              closeWeb('native-chat');
+              openNativeChat(chatId, {reload: true});
               return true;
             }
             if (isChatPath(path)) {
-              closeWeb();
+              console.log('[HybridApp] nativeChatList', {path});
+              closeWeb('native-chats-list');
               navigationRef.current?.navigate('MainTabs');
               return true;
             }
             return false;
           }}
         />
-        {showWeb && session ? (
+        {floatingAppBackVisible ? (
           <SafeAreaView style={styles.webCloseBar} edges={['top']}>
-            <TouchableOpacity style={styles.webCloseBtn} onPress={closeWeb}>
+            <TouchableOpacity
+              style={styles.webCloseBtn}
+              onPress={() => closeWeb('close-button')}>
               <Text style={styles.webCloseText}>← App</Text>
             </TouchableOpacity>
           </SafeAreaView>

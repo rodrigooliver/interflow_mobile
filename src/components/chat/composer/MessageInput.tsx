@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,7 @@ import {
   Lock,
   Pause,
   Play,
+  CalendarClock,
 } from 'lucide-react-native';
 import {useTheme} from '../../../contexts/ThemeContext';
 import {useI18n} from '../../../contexts/I18nContext';
@@ -39,8 +40,17 @@ import {
 } from '../../../theme/tokens';
 import type {ChatMessage} from '../../../services/chatsApi';
 import {sendChatMessage} from '../../../services/chatsApi';
+import {sendMessageSequence} from '../../../services/chatActions';
 import type {ChannelFeatures} from '../../../utils/channelFeatures';
 import {getFetchErrorKind} from '../../../utils/networkError';
+import {
+  fetchMessageShortcuts,
+  isSequenceShortcut,
+  normalizeShortcutSteps,
+  replaceVariables,
+  type MessageShortcut,
+  type ReplaceVariablesContext,
+} from '../../../utils/messageShortcuts';
 import {ComposerAttachSheet} from './ComposerAttachSheet';
 import {VoiceRecorderOverlay} from './VoiceRecorderOverlay';
 import {AIImproveBar} from './AIImproveBar';
@@ -76,9 +86,11 @@ type Props = {
   keyboardHeight?: number;
   /** Altura real do composer (pill + IA + reply…) para padding da lista. */
   onHeightChange?: (height: number) => void;
+  /** Contexto para variáveis de atalho `/`. */
+  variableContext?: ReplaceVariablesContext;
 };
 
-export function MessageComposer({
+export function MessageInput({
   chatId,
   organizationId,
   channelFeatures,
@@ -87,6 +99,7 @@ export function MessageComposer({
   onSent,
   keyboardHeight = 0,
   onHeightChange,
+  variableContext,
 }: Props) {
   const {theme: mode, colors: theme} = useTheme();
   const {t} = useI18n();
@@ -98,6 +111,10 @@ export function MessageComposer({
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiSnapshot, setAiSnapshot] = useState('');
   const [multiline, setMultiline] = useState(false);
+  const [shortcuts, setShortcuts] = useState<MessageShortcut[]>([]);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState('');
   const inputRef = useRef<TextInput>(null);
   const inputScrollRef = useRef<ScrollView>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -116,6 +133,24 @@ export function MessageComposer({
   } = useComposerAttachments();
 
   const voice = useVoiceRecorder();
+
+  useEffect(() => {
+    if (!organizationId) return;
+    void fetchMessageShortcuts(organizationId)
+      .then(setShortcuts)
+      .catch(() => setShortcuts([]));
+  }, [organizationId]);
+
+  const filteredShortcuts = useMemo(() => {
+    if (!showShortcuts) return [];
+    const q = text.startsWith('/') ? text.slice(1).trim().toLowerCase() : '';
+    return shortcuts
+      .filter(s => {
+        const title = (s.title || '').toLowerCase();
+        return !q || title.includes(q);
+      })
+      .slice(0, 8);
+  }, [showShortcuts, text, shortcuts]);
 
   const canSend =
     (text.trim().length > 0 || attachments.length > 0) && !sending;
@@ -143,32 +178,105 @@ export function MessageComposer({
     [t],
   );
 
+  const parseScheduledFor = useCallback((): string | false | undefined => {
+    if (!scheduleMode) return undefined;
+    const raw = scheduleDraft.trim();
+    if (!raw) return false;
+    const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+    const d = new Date(normalized);
+    if (Number.isNaN(d.getTime())) {
+      Alert.alert(
+        t.thread.errorTitle,
+        'Data inválida. Use AAAA-MM-DD HH:mm',
+      );
+      return false;
+    }
+    if (d.getTime() <= Date.now()) {
+      Alert.alert(t.thread.errorTitle, 'Agende uma data futura');
+      return false;
+    }
+    return d.toISOString();
+  }, [scheduleMode, scheduleDraft, t.thread.errorTitle]);
+
+  const applyShortcut = useCallback(
+    async (shortcut: MessageShortcut) => {
+      const steps = normalizeShortcutSteps(shortcut);
+      setShowShortcuts(false);
+      if (isSequenceShortcut(steps)) {
+        if (!organizationId || sending) return;
+        setSending(true);
+        setText('');
+        try {
+          await sendMessageSequence(organizationId, chatId, {
+            steps: steps.map(step => ({
+              content: replaceVariables(step.content, variableContext),
+              delay_after_ms: step.delay_after_ms,
+              sign_message: step.sign_message,
+              attachments: step.attachments || [],
+            })),
+          });
+          onSent?.();
+        } catch (e) {
+          sendErrorAlert(e);
+        } finally {
+          setSending(false);
+        }
+        return;
+      }
+      const content = replaceVariables(steps[0]?.content || '', variableContext);
+      setText(content);
+      setMultiline(shouldExpandInput(content));
+    },
+    [
+      organizationId,
+      sending,
+      chatId,
+      variableContext,
+      onSent,
+      sendErrorAlert,
+    ],
+  );
+
   const handleSend = useCallback(async () => {
     const content = text.trim();
     if ((!content && !attachments.length) || !organizationId || sending) {
       return;
     }
+    let scheduledFor: string | undefined;
+    if (scheduleMode) {
+      const parsed = parseScheduledFor();
+      if (parsed === false || parsed === undefined) return;
+      scheduledFor = parsed;
+    }
+
     setSending(true);
     const replyId = replyTo?.id;
     const snapshotText = content;
     const snapshotAttachments = [...attachments];
     setText('');
     setMultiline(false);
+    setShowShortcuts(false);
     clearAttachments();
     onClearReply();
     try {
       await sendChatMessage(chatId, content, organizationId, {
         replyToMessageId: replyId,
         type: content ? 'text' : 'file',
+        scheduledFor,
         attachments: snapshotAttachments.map(a => ({
           uri: a.uri,
           type: a.type,
           name: a.name,
         })),
       });
+      if (scheduleMode) {
+        setScheduleMode(false);
+        setScheduleDraft('');
+        Alert.alert('Agendado', 'Mensagem agendada com sucesso');
+      }
       onSent?.();
     } catch (e) {
-      console.error('[MessageComposer] send failed', e);
+      console.error('[MessageInput] send failed', e);
       setText(snapshotText);
       restoreAttachments(snapshotAttachments);
       sendErrorAlert(e);
@@ -187,6 +295,8 @@ export function MessageComposer({
     chatId,
     onSent,
     sendErrorAlert,
+    scheduleMode,
+    parseScheduledFor,
   ]);
 
   const finishVoice = useCallback(
@@ -215,7 +325,7 @@ export function MessageComposer({
         });
         onSent?.();
       } catch (e) {
-        console.error('[MessageComposer] audio send failed', e);
+        console.error('[MessageInput] audio send failed', e);
         sendErrorAlert(e);
       } finally {
         setSending(false);
@@ -296,6 +406,7 @@ export function MessageComposer({
   const handleChangeText = useCallback(
     (next: string) => {
       setText(next);
+      setShowShortcuts(next.startsWith('/'));
       // Dinâmico: ao apagar e voltar a 1 linha, recentraliza
       setMultiline(shouldExpandInput(next));
       if (
@@ -409,6 +520,58 @@ export function MessageComposer({
         </View>
       ) : null}
 
+      {showShortcuts && filteredShortcuts.length > 0 ? (
+        <View
+          style={[
+            styles.shortcutsBox,
+            {backgroundColor: theme.card, borderColor: theme.border},
+          ]}>
+          {filteredShortcuts.map(item => (
+            <TouchableOpacity
+              key={item.id}
+              style={[styles.shortcutRow, {borderBottomColor: theme.separator}]}
+              onPress={() => void applyShortcut(item)}>
+              <Text style={[styles.shortcutTitle, {color: theme.label}]} numberOfLines={1}>
+                /{item.title}
+              </Text>
+              <Text
+                style={[styles.shortcutPreview, {color: theme.tertiaryLabel}]}
+                numberOfLines={1}>
+                {replaceVariables(
+                  normalizeShortcutSteps(item)[0]?.content || '',
+                  variableContext,
+                )}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+
+      {scheduleMode ? (
+        <View
+          style={[
+            styles.scheduleBar,
+            {backgroundColor: theme.card, borderColor: theme.border},
+          ]}>
+          <CalendarClock size={16} color={brand.blue} />
+          <TextInput
+            style={[styles.scheduleInput, {color: theme.label}]}
+            placeholder="AAAA-MM-DD HH:mm"
+            placeholderTextColor={theme.tertiaryLabel}
+            value={scheduleDraft}
+            onChangeText={setScheduleDraft}
+          />
+          <TouchableOpacity
+            onPress={() => {
+              setScheduleMode(false);
+              setScheduleDraft('');
+            }}
+            hitSlop={8}>
+            <X size={16} color={theme.tertiaryLabel} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {attachments.length > 0 ? (
         <View
           style={[
@@ -466,6 +629,29 @@ export function MessageComposer({
       {/* Flutuante acima do input — só com teclado aberto */}
       {keyboardOpen && !voice.recording && !voice.locked && !aiMode ? (
         <View style={styles.aiFloatRow} pointerEvents="box-none">
+          <TouchableOpacity
+            style={[
+              styles.aiFloatBtn,
+              glassShadow(mode),
+              {
+                backgroundColor: scheduleMode
+                  ? brand.blueSoft
+                  : mode === 'dark'
+                    ? 'rgba(15,23,42,0.72)'
+                    : 'rgba(255,255,255,0.92)',
+                borderColor: theme.border,
+              },
+            ]}
+            onPress={() => setScheduleMode(v => !v)}
+            disabled={sending}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Agendar mensagem">
+            <CalendarClock
+              size={18}
+              color={scheduleMode ? brand.blue : theme.secondaryLabel}
+            />
+          </TouchableOpacity>
           <TouchableOpacity
             style={[
               styles.aiFloatBtn,
@@ -761,6 +947,39 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: 8,
   },
+  shortcutsBox: {
+    borderRadius: radii.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    overflow: 'hidden',
+    maxHeight: 220,
+  },
+  shortcutRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  shortcutTitle: {
+    fontSize: typography.subhead,
+    fontWeight: '600',
+  },
+  shortcutPreview: {
+    fontSize: typography.footnote,
+  },
+  scheduleBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: radii.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  scheduleInput: {
+    flex: 1,
+    fontSize: typography.subhead,
+    paddingVertical: Platform.OS === 'ios' ? 4 : 2,
+  },
   replyBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -826,7 +1045,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   aiFloatRow: {
-    alignItems: 'flex-end',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
     paddingRight: 4,
     marginBottom: -4,
   },

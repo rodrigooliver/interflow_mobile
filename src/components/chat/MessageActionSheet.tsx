@@ -13,13 +13,24 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import {BlurView} from '@react-native-community/blur';
-import {Reply, Copy, Info, Plus} from 'lucide-react-native';
+import {
+  Reply,
+  Copy,
+  Info,
+  Plus,
+  Pencil,
+  Trash2,
+  Pin,
+  PinOff,
+  Download,
+} from 'lucide-react-native';
 import {useI18n} from '../../contexts/I18nContext';
 import {useTheme} from '../../contexts/ThemeContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
 import type {ChatMessage} from '../../services/chatsApi';
 import type {ChannelFeatures} from '../../utils/channelFeatures';
 import {
+  getDownloadableMedia,
   isOutgoing,
   isSystemEvent,
   type MessageAnchor,
@@ -45,6 +56,15 @@ type Props = {
   onDetails: (message: ChatMessage) => void;
   /** Abre o teclado completo — deve rodar fora deste Modal (RN não empilha bem). */
   onMoreEmojis: (message: ChatMessage) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canPin?: boolean;
+  isPinned?: boolean;
+  onEdit?: (message: ChatMessage) => void;
+  onDelete?: (message: ChatMessage) => void;
+  onPin?: (message: ChatMessage) => void;
+  onUnpin?: (message: ChatMessage) => void;
+  onDownload?: (message: ChatMessage) => void;
 };
 
 const REACTION_H = 56;
@@ -69,6 +89,15 @@ export function MessageActionSheet({
   onCopy,
   onDetails,
   onMoreEmojis,
+  canEdit,
+  canDelete,
+  canPin,
+  isPinned,
+  onEdit,
+  onDelete,
+  onPin,
+  onUnpin,
+  onDownload,
 }: Props) {
   const {t} = useI18n();
   const {theme: mode, colors: theme} = useTheme();
@@ -81,7 +110,17 @@ export function MessageActionSheet({
 
   const capabilities = useMemo(() => {
     if (!displayMessage) {
-      return {canReact: false, canReply: false, canCopy: false, actionCount: 1};
+      return {
+        canReact: false,
+        canReply: false,
+        canCopy: false,
+        canDownload: false,
+        showEdit: false,
+        showDelete: false,
+        showPin: false,
+        showUnpin: false,
+        actionCount: 1,
+      };
     }
     const type = displayMessage.type || '';
     const systemLike =
@@ -101,14 +140,50 @@ export function MessageActionSheet({
       channelFeatures.canReplyToMessages &&
       chatStatus === 'in_progress';
     const canCopy = !!(displayMessage.content && displayMessage.content.trim());
+    const canDownload = !!(
+      onDownload &&
+      displayMessage.status !== 'deleted' &&
+      getDownloadableMedia(displayMessage)
+    );
 
-    // só details (+ reply/copy opcionais) — sem cancelar
+    const showEdit = !!(canEdit && onEdit);
+    const showDelete = !!(canDelete && onDelete);
+    const showPin = !!(canPin && !isPinned && onPin);
+    const showUnpin = !!(canPin && isPinned && onUnpin);
+
     let actionCount = 1;
     if (canReply) actionCount += 1;
     if (canCopy) actionCount += 1;
+    if (canDownload) actionCount += 1;
+    if (showEdit) actionCount += 1;
+    if (showDelete) actionCount += 1;
+    if (showPin || showUnpin) actionCount += 1;
 
-    return {canReact, canReply, canCopy, actionCount};
-  }, [displayMessage, channelFeatures, chatStatus]);
+    return {
+      canReact,
+      canReply,
+      canCopy,
+      canDownload,
+      showEdit,
+      showDelete,
+      showPin,
+      showUnpin,
+      actionCount,
+    };
+  }, [
+    displayMessage,
+    channelFeatures,
+    chatStatus,
+    canEdit,
+    canDelete,
+    canPin,
+    isPinned,
+    onEdit,
+    onDelete,
+    onPin,
+    onUnpin,
+    onDownload,
+  ]);
 
   const layout = useMemo(() => {
     const screenW = winW || Dimensions.get('window').width;
@@ -394,6 +469,56 @@ export function MessageActionSheet({
                       void onCopy(msg);
                     })
                   }
+                />
+              ) : null}
+              {capabilities.canDownload ? (
+                <ActionRow
+                  icon={<Download size={20} color={theme.label} />}
+                  label={t.messageActions.download}
+                  color={theme.label}
+                  pressedBg={theme.fill}
+                  borderColor={solidBorder}
+                  onPress={() => dismiss(msg => onDownload?.(msg))}
+                />
+              ) : null}
+              {capabilities.showEdit ? (
+                <ActionRow
+                  icon={<Pencil size={20} color={theme.label} />}
+                  label="Editar"
+                  color={theme.label}
+                  pressedBg={theme.fill}
+                  borderColor={solidBorder}
+                  onPress={() => dismiss(msg => onEdit?.(msg))}
+                />
+              ) : null}
+              {capabilities.showDelete ? (
+                <ActionRow
+                  icon={<Trash2 size={20} color="#EF4444" />}
+                  label="Excluir"
+                  color="#EF4444"
+                  pressedBg={theme.fill}
+                  borderColor={solidBorder}
+                  onPress={() => dismiss(msg => onDelete?.(msg))}
+                />
+              ) : null}
+              {capabilities.showPin ? (
+                <ActionRow
+                  icon={<Pin size={20} color={theme.label} />}
+                  label="Fixar"
+                  color={theme.label}
+                  pressedBg={theme.fill}
+                  borderColor={solidBorder}
+                  onPress={() => dismiss(msg => onPin?.(msg))}
+                />
+              ) : null}
+              {capabilities.showUnpin ? (
+                <ActionRow
+                  icon={<PinOff size={20} color={theme.label} />}
+                  label="Desafixar"
+                  color={theme.label}
+                  pressedBg={theme.fill}
+                  borderColor={solidBorder}
+                  onPress={() => dismiss(msg => onUnpin?.(msg))}
                 />
               ) : null}
               <ActionRow

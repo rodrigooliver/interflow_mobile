@@ -55,8 +55,9 @@ export function MarkdownText({
     [content, compact],
   );
 
-  const fontSize = compact ? typography.subhead : typography.body;
-  const lineHeight = compact ? 18 : 22;
+  // Chat: ~14–15px (web message-content-mobile); lista compacta um pouco menor
+  const fontSize = compact ? typography.footnote : 15;
+  const lineHeight = compact ? 18 : 21;
 
   const mdStyles = useMemo(
     () =>

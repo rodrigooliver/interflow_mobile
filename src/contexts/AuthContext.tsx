@@ -174,11 +174,16 @@ export function AuthProvider({children}: {children: ReactNode}) {
     });
 
     const {data: sub} = supabase.auth.onAuthStateChange(async (event, next) => {
-      if (applyingRemoteRef.current && event === 'SIGNED_IN') {
-        // still update local state
-      }
+      const fromRemoteApply = applyingRemoteRef.current;
       setSession(next);
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_OUT') {
+      // Sessão vinda da WebView: não emitir lastAuthEvent SIGNED_IN —
+      // senão o WebViewShell re-hydrata e a web reenvia auth.session em loop.
+      if (
+        (event === 'SIGNED_IN' ||
+          event === 'TOKEN_REFRESHED' ||
+          event === 'SIGNED_OUT') &&
+        !(fromRemoteApply && event === 'SIGNED_IN')
+      ) {
         setLastAuthEvent(event);
       }
 

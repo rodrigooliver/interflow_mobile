@@ -34,8 +34,17 @@ function getCameraRollModule(): CameraRollNative | null {
   return legacy?.saveToCameraRoll ? legacy : null;
 }
 
-function guessExtension(uri: string): string {
+type GalleryMediaType = 'photo' | 'video';
+
+function guessExtension(uri: string, mediaType: GalleryMediaType = 'photo'): string {
   const clean = uri.split('?')[0]?.toLowerCase() || '';
+  if (mediaType === 'video') {
+    if (clean.endsWith('.mov')) return 'mov';
+    if (clean.endsWith('.3gp')) return '3gp';
+    if (clean.endsWith('.webm')) return 'webm';
+    if (clean.endsWith('.mkv')) return 'mkv';
+    return 'mp4';
+  }
   if (clean.endsWith('.png')) return 'png';
   if (clean.endsWith('.webp')) return 'webp';
   if (clean.endsWith('.gif')) return 'gif';
@@ -76,14 +85,17 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
  * Baixa URL remota (ex.: Supabase signed) para arquivo local.
  * Photos no iOS NÃO aceita https — precisa de file:// (erro 3302).
  */
-async function downloadToCache(uri: string): Promise<string> {
+async function downloadToCache(
+  uri: string,
+  mediaType: GalleryMediaType = 'photo',
+): Promise<string> {
   if (!NativeModules.RNFSManager) {
     throw new Error('RNFS unavailable — rebuild the native app');
   }
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const RNFS = require('react-native-fs') as typeof import('react-native-fs');
-  const ext = guessExtension(uri);
+  const ext = guessExtension(uri, mediaType);
   const dest = `${RNFS.CachesDirectoryPath}/interflow-${Date.now()}.${ext}`;
 
   try {
@@ -135,7 +147,10 @@ async function toShareableImageUrl(uri: string): Promise<string> {
 }
 
 /** Salva direto na galeria (Fotos). */
-export async function saveImageToGallery(uri: string): Promise<SaveImageResult> {
+export async function saveMediaToGallery(
+  uri: string,
+  mediaType: GalleryMediaType = 'photo',
+): Promise<SaveImageResult> {
   if (!uri) return 'error';
 
   try {
@@ -149,14 +164,18 @@ export async function saveImageToGallery(uri: string): Promise<SaveImageResult> 
     }
 
     // iOS/Android: Photos só aceita arquivo local — baixar signed URLs antes
-    const tag = isRemoteUri(uri) ? await downloadToCache(uri) : uri;
+    const tag = isRemoteUri(uri) ? await downloadToCache(uri, mediaType) : uri;
 
-    await mod.saveToCameraRoll(tag, {type: 'photo', album: ''});
+    await mod.saveToCameraRoll(tag, {type: mediaType, album: ''});
     return 'saved';
   } catch (e) {
     console.error('[saveImage] gallery save failed', e);
     return 'error';
   }
+}
+
+export function saveImageToGallery(uri: string): Promise<SaveImageResult> {
+  return saveMediaToGallery(uri, 'photo');
 }
 
 /** Abre o Share nativo (WhatsApp, AirDrop, etc.). */

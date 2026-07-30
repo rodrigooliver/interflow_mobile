@@ -26,7 +26,7 @@ export async function fetchInternalChatsFromCollab(
   return parseCollabRowsToInternalChats(data ?? [], profileId);
 }
 
-/** Adapta summary interno para o ChatListRow nativo. */
+/** Adapta summary interno para o ChatItem nativo. */
 export function internalChatToListItem(
   chat: InternalChatSummary,
   profileId: string,
