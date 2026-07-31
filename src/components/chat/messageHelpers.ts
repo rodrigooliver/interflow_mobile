@@ -142,6 +142,36 @@ export function getMetadata(msg: ChatMessage): Record<string, unknown> {
   return {};
 }
 
+/** Resposta a story do Instagram (metadata.message.reply_to.story). */
+export type InstagramStoryReply = {
+  id?: string;
+  url?: string;
+};
+
+export function getInstagramStoryReply(
+  metadata: Record<string, unknown> | unknown,
+): InstagramStoryReply | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const message = (metadata as {message?: unknown}).message;
+  if (!message || typeof message !== 'object') return undefined;
+  const replyTo = (message as {reply_to?: unknown}).reply_to;
+  if (!replyTo || typeof replyTo !== 'object') return undefined;
+  const story = (replyTo as {story?: unknown}).story;
+  if (!story || typeof story !== 'object') return undefined;
+
+  const id =
+    typeof (story as {id?: unknown}).id === 'string'
+      ? (story as {id: string}).id
+      : undefined;
+  const url =
+    typeof (story as {url?: unknown}).url === 'string'
+      ? (story as {url: string}).url
+      : undefined;
+
+  if (!id && !url) return undefined;
+  return {id, url};
+}
+
 export function getAttachments(msg: ChatMessage): MessageAttachment[] {
   if (!Array.isArray(msg.attachments)) return [];
   return msg.attachments as MessageAttachment[];

@@ -17,8 +17,8 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import {
-  SafeAreaView,
   useSafeAreaInsets,
+  initialWindowMetrics,
 } from 'react-native-safe-area-context';
 import {
   Archive,
@@ -117,6 +117,11 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
   const {t} = useI18n();
   const {chatsPermissions, isOwnerOrAdmin} = usePermissions();
   const insets = useSafeAreaInsets();
+  // Congela o topo desde o 1º frame (evita 0→inset ao abrir)
+  const topInset = Math.max(
+    insets.top,
+    initialWindowMetrics?.insets.top ?? 0,
+  );
 
   const orgId = currentOrganizationMember?.organization_id;
   const userId = session?.user?.id;
@@ -450,7 +455,9 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
             style={[
               styles.circleBtn,
               {
-                backgroundColor: listMenuActive ? brand.blueSoft : theme.fill,
+                backgroundColor: listMenuActive
+                  ? brand.blueSoft
+                  : theme.fill,
               },
             ]}
             onPress={() => setShowListMenu(true)}
@@ -473,106 +480,116 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
         </View>
       </View>
 
-      <View style={styles.searchClip}>
-        <View style={[styles.searchBox, {backgroundColor: theme.searchBg}]}>
-          <Search size={16} color={theme.tertiaryLabel} strokeWidth={2.2} />
-          <TextInput
-            ref={searchInputRef}
-            value={search}
-            onChangeText={setSearch}
-            onSubmitEditing={() => {
-              offsetRef.current = 0;
-              void loadChats(true);
+        <View style={styles.searchClip}>
+          <View style={[styles.searchBox, {backgroundColor: theme.searchBg}]}>
+            <Search size={16} color={theme.tertiaryLabel} strokeWidth={2.2} />
+            <TextInput
+              ref={searchInputRef}
+              value={search}
+              onChangeText={setSearch}
+              onSubmitEditing={() => {
+                offsetRef.current = 0;
+                void loadChats(true);
+              }}
+              placeholder={t.chats.search}
+              placeholderTextColor={theme.tertiaryLabel}
+              style={[styles.searchInput, {color: theme.label}]}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+          </View>
+        </View>
+
+        <View style={styles.filtersClip}>
+          <FlatList
+            horizontal
+            data={visibleFilters}
+            keyExtractor={item => item.id}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filtersRow}
+            renderItem={({item}) => {
+              const active = item.id === selectedFilter;
+              const filterColor = resolveQuickFilterColor(item.color);
+              const count =
+                item.showCount && typeof counts[item.id] === 'number'
+                  ? counts[item.id]
+                  : null;
+              const showBadge = count != null && count > 0;
+
+              return (
+                <TouchableOpacity
+                  onPress={() => setSelectedFilter(item.id)}
+                  style={[
+                    styles.segment,
+                    active
+                      ? {backgroundColor: filterColor}
+                      : {
+                          backgroundColor: theme.fill,
+                          borderColor: `${filterColor}33`,
+                          borderWidth: StyleSheet.hairlineWidth * 2,
+                        },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      {color: active ? '#FFFFFF' : theme.secondaryLabel},
+                    ]}
+                    numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                  {item.showCount ? (
+                    <View
+                      style={[
+                        styles.countBadge,
+                        showBadge
+                          ? active
+                            ? styles.countBadgeOnActive
+                            : {backgroundColor: filterColor}
+                          : styles.countBadgePlaceholder,
+                      ]}>
+                      {showBadge ? (
+                        <Text
+                          style={[
+                            styles.countBadgeText,
+                            active
+                              ? {color: filterColor}
+                              : styles.countBadgeTextOnIdle,
+                          ]}>
+                          {count > 99 ? '99+' : count}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+              );
             }}
-            placeholder={t.chats.search}
-            placeholderTextColor={theme.tertiaryLabel}
-            style={[styles.searchInput, {color: theme.label}]}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
           />
         </View>
       </View>
-
-      <View style={styles.filtersClip}>
-        <FlatList
-          horizontal
-          data={visibleFilters}
-          keyExtractor={item => item.id}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filtersRow}
-          renderItem={({item}) => {
-            const active = item.id === selectedFilter;
-            const filterColor = resolveQuickFilterColor(item.color);
-            const count =
-              item.showCount && typeof counts[item.id] === 'number'
-                ? counts[item.id]
-                : null;
-            const showBadge = count != null && count > 0;
-
-            return (
-              <TouchableOpacity
-                onPress={() => setSelectedFilter(item.id)}
-                style={[
-                  styles.segment,
-                  active
-                    ? {backgroundColor: filterColor}
-                    : {
-                        backgroundColor: theme.fill,
-                        borderColor: `${filterColor}33`,
-                        borderWidth: StyleSheet.hairlineWidth * 2,
-                      },
-                ]}>
-                <Text
-                  style={[
-                    styles.segmentText,
-                    {color: active ? '#FFFFFF' : theme.secondaryLabel},
-                  ]}
-                  numberOfLines={1}>
-                  {item.label}
-                </Text>
-                {showBadge ? (
-                  <View
-                    style={[
-                      styles.countBadge,
-                      active
-                        ? styles.countBadgeOnActive
-                        : {backgroundColor: filterColor},
-                    ]}>
-                    <Text
-                      style={[
-                        styles.countBadgeText,
-                        active
-                          ? {color: filterColor}
-                          : styles.countBadgeTextOnIdle,
-                      ]}>
-                      {count > 99 ? '99+' : count}
-                    </Text>
-                  </View>
-                ) : null}
-              </TouchableOpacity>
-            );
-          }}
-        />
-      </View>
-    </View>
   );
 
   if (!chatsPermissions.enabled) {
     return (
-      <SafeAreaView style={[styles.root, {backgroundColor: theme.pageBg}]}>
+      <View
+        style={[
+          styles.root,
+          {backgroundColor: theme.pageBg, paddingTop: topInset},
+        ]}>
         <View style={styles.centered}>
           <Text style={[styles.emptyText, {color: theme.secondaryLabel}]}>
             {t.chats.noPermission}
           </Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView
-      style={[styles.root, {backgroundColor: theme.pageBg}]}
-      edges={['top']}>
+    <View
+      style={[
+        styles.root,
+        {backgroundColor: theme.pageBg, paddingTop: topInset},
+      ]}>
       {/* Overlay compacto — só opacidade/translate (não altera altura da lista) */}
       <Animated.View
         pointerEvents={compactInteractive ? 'auto' : 'none'}
@@ -580,7 +597,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
           styles.compactOverlay,
           {
             // Absolute ignora o padding do SafeAreaView — respeitar o notch/horário
-            paddingTop: insets.top,
+            paddingTop: topInset,
             backgroundColor: theme.pageBg,
             opacity: compactOpacity,
             transform: [{translateY: compactTranslateY}],
@@ -640,17 +657,22 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
         ListHeaderComponent={listHeader}
         onScroll={onListScroll}
         scrollEventThrottle={16}
+        // Evita o iOS somar safe-area de novo (já usamos paddingTop fixo)
+        contentInsetAdjustmentBehavior="never"
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              offsetRef.current = 0;
-              void loadChats(true);
-              void loadCounts();
-            }}
-            tintColor={brand.blue}
-          />
+          // Só após o 1º load: RefreshControl no mount ajusta inset no iOS
+          loading && chats.length === 0 ? undefined : (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                offsetRef.current = 0;
+                void loadChats(true);
+                void loadCounts();
+              }}
+              tintColor={brand.blue}
+            />
+          )
         }
         onEndReached={() => {
           if (!loadingMore && hasMore) void loadChats(false);
@@ -713,7 +735,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
               {
                 backgroundColor: theme.card,
                 borderColor: theme.border,
-                top: insets.top + 52,
+                top: topInset + 52,
               },
             ]}
             onPress={e => e.stopPropagation()}>
@@ -914,7 +936,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
           void loadChats(true);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1065,6 +1087,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.full,
     paddingHorizontal: 11,
     paddingVertical: 5,
+    // badge 18 + paddingVertical 5*2 — evita pulo quando o count chega
+    minHeight: 28,
   },
   segmentText: {
     fontSize: 12,
@@ -1077,6 +1101,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  countBadgePlaceholder: {
+    backgroundColor: 'transparent',
   },
   countBadgeOnActive: {
     backgroundColor: '#FFFFFF',

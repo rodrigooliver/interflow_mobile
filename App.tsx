@@ -12,6 +12,7 @@ import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {
   SafeAreaProvider,
   SafeAreaView,
+  initialWindowMetrics,
 } from 'react-native-safe-area-context';
 import * as Sentry from '@sentry/react-native';
 import env, {type ChatUIMode} from './src/config/env';
@@ -146,21 +147,23 @@ function App() {
   }, []);
 
   // Root sempre escuro no boot — elimina flash branco entre splash e app.
+  // initialWindowMetrics: evita inset 0→real no 1º frame (pulo de cima pra baixo).
   return (
     <GestureHandlerRootView
       style={[styles.flex, {backgroundColor: LOADING_BG_DARK}]}>
-      {!prefs ? (
-        <BootLoadingScreen />
-      ) : (
-        <SafeAreaProvider
-          style={[styles.flex, {backgroundColor: LOADING_BG_DARK}]}>
+      <SafeAreaProvider
+        initialMetrics={initialWindowMetrics}
+        style={[styles.flex, {backgroundColor: LOADING_BG_DARK}]}>
+        {!prefs ? (
+          <BootLoadingScreen />
+        ) : (
           <ThemeProvider initialTheme={prefs.theme}>
             <I18nProvider initialLocale={prefs.locale}>
               <RootSwitcher initialMode={prefs.uiMode || env.CHAT_UI_MODE} />
             </I18nProvider>
           </ThemeProvider>
-        </SafeAreaProvider>
-      )}
+        )}
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

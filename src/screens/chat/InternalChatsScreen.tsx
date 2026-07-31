@@ -14,8 +14,8 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import {
-  SafeAreaView,
   useSafeAreaInsets,
+  initialWindowMetrics,
 } from 'react-native-safe-area-context';
 import {MoreHorizontal, Plus, Search} from 'lucide-react-native';
 import {useAuth} from '../../contexts/AuthContext';
@@ -52,6 +52,10 @@ export function InternalChatsScreen({
   const {colors: theme} = useTheme();
   const {t} = useI18n();
   const insets = useSafeAreaInsets();
+  const topInset = Math.max(
+    insets.top,
+    initialWindowMetrics?.insets.top ?? 0,
+  );
 
   const orgId = currentOrganizationMember?.organization_id;
   // Igual à web: profile_id || user_id
@@ -228,15 +232,17 @@ export function InternalChatsScreen({
   );
 
   return (
-    <SafeAreaView
-      style={[styles.root, {backgroundColor: theme.pageBg}]}
-      edges={['top']}>
+    <View
+      style={[
+        styles.root,
+        {backgroundColor: theme.pageBg, paddingTop: topInset},
+      ]}>
       <Animated.View
         pointerEvents={compactInteractive ? 'auto' : 'none'}
         style={[
           styles.compactOverlay,
           {
-            paddingTop: insets.top,
+            paddingTop: topInset,
             backgroundColor: theme.pageBg,
             opacity: compactOpacity,
             transform: [{translateY: compactTranslateY}],
@@ -287,14 +293,17 @@ export function InternalChatsScreen({
           ListHeaderComponent={listHeader}
           onScroll={onListScroll}
           scrollEventThrottle={16}
+          contentInsetAdjustmentBehavior="never"
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                void loadChats(true);
-              }}
-              tintColor={brand.blue}
-            />
+            loading && chats.length === 0 ? undefined : (
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => {
+                  void loadChats(true);
+                }}
+                tintColor={brand.blue}
+              />
+            )
           }
           ListEmptyComponent={
             fetchError ? (
@@ -336,7 +345,7 @@ export function InternalChatsScreen({
           }}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

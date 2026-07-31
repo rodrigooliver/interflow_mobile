@@ -70,6 +70,7 @@ import {
   getConstrainedMediaSize,
   getEmailSubject,
   getExternalAdReply,
+  getInstagramStoryReply,
   getInteractiveButtons,
   getMetadata,
   getStageUpdateInfo,
@@ -267,6 +268,62 @@ function ImageAttachmentPreview({
         />
       </MediaPressable>
       <ImageViewerModal
+        visible={viewerOpen}
+        uri={url}
+        onClose={() => setViewerOpen(false)}
+      />
+    </>
+  );
+}
+
+/** Card de resposta a story do Instagram — URL costuma ser vídeo (lookaside CDN). */
+function InstagramStoryReplyCard({
+  url,
+  label,
+  out,
+  mutedColor,
+  padded,
+}: {
+  url: string;
+  label: string;
+  out: boolean;
+  mutedColor: string;
+  padded?: boolean;
+}) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  return (
+    <>
+      <View style={[styles.storyReplyCard, padded && styles.imageInnerPad]}>
+        <Text
+          style={[styles.storyReplyLabel, {color: mutedColor}]}
+          numberOfLines={1}>
+          {label}
+        </Text>
+        <MediaPressable
+          onPress={() => setViewerOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          style={[
+            styles.storyReplyMedia,
+            out ? styles.mediaOutClip : styles.mediaInClip,
+          ]}>
+          <View
+            style={[
+              StyleSheet.absoluteFillObject,
+              styles.videoPosterFallback,
+              styles.media,
+              out ? styles.mediaOut : styles.mediaIn,
+            ]}
+          />
+          <View style={styles.videoPlayOverlay}>
+            <View style={styles.videoPlayBtn}>
+              <Play size={22} color="#1f2937" fill="#1f2937" />
+            </View>
+          </View>
+        </MediaPressable>
+      </View>
+      <VideoPreviewModal
         visible={viewerOpen}
         uri={url}
         onClose={() => setViewerOpen(false)}
@@ -1120,6 +1177,10 @@ export const MessageBubble = memo(function MessageBubble({
 
   const externalAdReply = useMemo(() => getExternalAdReply(item), [item]);
   const hasWhatsAppAd = Boolean(externalAdReply?.title);
+  const storyReply = useMemo(
+    () => getInstagramStoryReply(metadata),
+    [metadata],
+  );
   const canPreviewEmail = hasEmailOriginalContent(metadata);
   const emailSubject = getEmailSubject(metadata);
 
@@ -1158,6 +1219,7 @@ export const MessageBubble = memo(function MessageBubble({
       contact: t.messages.contact,
       deleted: t.messages.deleted,
       template: t.messages.template,
+      storyReply: t.messages.storyReply,
     }),
     [t],
   );
@@ -1666,6 +1728,18 @@ export const MessageBubble = memo(function MessageBubble({
                   (responseTo.type ? String(responseTo.type) : '…')}
               </Text>
             </View>
+          ) : null}
+
+          {storyReply?.url ? (
+            <InstagramStoryReplyCard
+              url={storyReply.url}
+              label={labels.storyReply}
+              out={out}
+              mutedColor={
+                out ? 'rgba(255,255,255,0.85)' : theme.secondaryLabel
+              }
+              padded={hasEdgeMedia}
+            />
           ) : null}
 
           {hasWhatsAppAd && externalAdReply ? (
@@ -2417,6 +2491,22 @@ const styles = StyleSheet.create({
   quoteText: {
     fontSize: typography.caption,
     lineHeight: 16,
+  },
+  storyReplyCard: {
+    gap: 6,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+  },
+  storyReplyLabel: {
+    fontSize: typography.caption,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  storyReplyMedia: {
+    width: 108,
+    height: 168,
+    overflow: 'hidden',
+    backgroundColor: '#111827',
   },
   templateBlock: {
     gap: 2,
