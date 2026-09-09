@@ -536,7 +536,7 @@ export function ChatThreadScreen({
     const refreshPinned = () => {
       void supabase
         .from('pinned_messages')
-        .select('id, message_id, comment, message:messages(content, type)')
+        .select('id, message_id, comment, message:messages(content, type, file_id)')
         .eq('chat_id', chatId)
         .then(({data}) => {
           if (data) setPinned(data as PinnedRow[]);
