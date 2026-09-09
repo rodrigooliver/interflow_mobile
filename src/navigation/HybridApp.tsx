@@ -393,6 +393,7 @@ export function HybridApp({onModeChanged}: HybridAppProps) {
         pointerEvents={showWeb ? 'auto' : 'none'}>
         <WebViewShell
           visible={showWeb}
+          uiMode="hybrid"
           sessionPayload={sessionPayload}
           pendingPath={needsWebLogin ? '/login' : webPath}
           pendingPathNonce={webPathNonce}

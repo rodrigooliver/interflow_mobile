@@ -141,12 +141,14 @@ function MediaPressable({
   disabled,
   style,
   accessibilityRole,
+  accessibilityLabel,
   children,
 }: {
   onPress?: () => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
   accessibilityRole?: 'button' | 'imagebutton';
+  accessibilityLabel?: string;
   children: React.ReactNode;
 }) {
   const longPress = useContext(BubbleLongPressContext);
@@ -157,6 +159,7 @@ function MediaPressable({
       delayLongPress={LONG_PRESS_DELAY}
       disabled={disabled}
       accessibilityRole={accessibilityRole}
+      accessibilityLabel={accessibilityLabel}
       style={({pressed}) => [style, pressed && styles.mediaPressed]}>
       {children}
     </Pressable>
@@ -952,12 +955,23 @@ function AttachmentBlock({
   out,
   theme,
   labels,
+  isFileTooLarge = false,
+  fileName,
 }: {
   attachment: MessageAttachment;
   messageType?: string | null;
   out: boolean;
   theme: BubbleTheme;
-  labels: {openAudio: string; openVideo: string; openFile: string; mediaAbsent: string};
+  labels: {
+    openAudio: string;
+    openVideo: string;
+    openFile: string;
+    mediaAbsent: string;
+    mediaTooLargeTitle: string;
+    mediaTooLarge: string;
+  };
+  isFileTooLarge?: boolean;
+  fileName?: string | null;
 }) {
   const longPress = useContext(BubbleLongPressContext);
   const url = attachment.url || attachment.preview_url;
@@ -966,6 +980,40 @@ function AttachmentBlock({
   const type = (messageType || attachment.type || '').toLowerCase();
 
   if (!url) {
+    if (isFileTooLarge) {
+      const displayName =
+        fileName ||
+        attachment.name ||
+        attachment.file_name ||
+        null;
+      return (
+        <View
+          style={[
+            styles.mediaTooLarge,
+            {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill},
+          ]}>
+          <Ban size={18} color={muted} />
+          <View style={styles.mediaTooLargeTextWrap}>
+            <Text style={[styles.mediaTooLargeTitle, {color: textColor}]}>
+              {labels.mediaTooLargeTitle}
+            </Text>
+            {displayName ? (
+              <Text
+                style={[styles.mediaTooLargeFileName, {color: muted}]}
+                numberOfLines={1}>
+                {displayName}
+              </Text>
+            ) : null}
+            <Text
+              style={[styles.mediaTooLargeBody, {color: muted}]}
+              numberOfLines={2}>
+              {labels.mediaTooLarge}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
     return (
       <View style={[styles.mediaAbsent, {backgroundColor: out ? 'rgba(255,255,255,0.12)' : theme.fill}]}>
         <Ban size={18} color={muted} />
@@ -1211,6 +1259,8 @@ export const MessageBubble = memo(function MessageBubble({
       info: t.messages.info,
       privateNote: t.messages.privateNote,
       mediaAbsent: t.messages.mediaAbsent,
+      mediaTooLargeTitle: t.messages.mediaTooLargeTitle,
+      mediaTooLarge: t.messages.mediaTooLarge,
       openAudio: t.messages.openAudio,
       openVideo: t.messages.openVideo,
       openMap: t.messages.openMap,
@@ -1762,6 +1812,13 @@ export const MessageBubble = memo(function MessageBubble({
                     out={out}
                     theme={theme}
                     labels={labels}
+                    isFileTooLarge={metadata.media_error === 'FILE_TOO_LARGE'}
+                    fileName={
+                      (typeof metadata.file_name === 'string' && metadata.file_name) ||
+                      att.name ||
+                      att.file_name ||
+                      null
+                    }
                   />
                 </View>
               ))
@@ -1773,6 +1830,12 @@ export const MessageBubble = memo(function MessageBubble({
                     out={out}
                     theme={theme}
                     labels={labels}
+                    isFileTooLarge={metadata.media_error === 'FILE_TOO_LARGE'}
+                    fileName={
+                      (typeof metadata.file_name === 'string' && metadata.file_name) ||
+                      (typeof item.content === 'string' && item.content.trim()) ||
+                      null
+                    }
                   />
                 )
               : null}
@@ -1955,6 +2018,8 @@ export const MessageBubble = memo(function MessageBubble({
         visible={emailPreviewOpen}
         onClose={() => setEmailPreviewOpen(false)}
         email={metadata as EmailMessageMetadata}
+        chatId={item.chat_id}
+        messageId={item.id}
       />
     ) : null}
     </>,
@@ -2177,6 +2242,31 @@ const styles = StyleSheet.create({
   },
   mediaAbsentText: {
     fontSize: typography.footnote,
+  },
+  mediaTooLarge: {
+    minWidth: 180,
+    maxWidth: 240,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+  },
+  mediaTooLargeTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  mediaTooLargeTitle: {
+    fontSize: typography.footnote,
+    fontWeight: '600',
+  },
+  mediaTooLargeFileName: {
+    fontSize: typography.caption,
+  },
+  mediaTooLargeBody: {
+    fontSize: typography.caption,
+    lineHeight: 16,
   },
   mediaPressed: {
     opacity: 0.85,

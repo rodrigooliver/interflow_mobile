@@ -7,13 +7,16 @@ import {
   ScrollView,
   StyleSheet,
   useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Mail, X} from 'lucide-react-native';
 import {useTheme} from '../../contexts/ThemeContext';
 import {useI18n} from '../../contexts/I18nContext';
+import {useAuth} from '../../contexts/AuthContext';
 import {radii, spacing, typography} from '../../theme/tokens';
+import {fetchMessageEmail} from '../../services/messageActions';
 import {
   buildEmailSrcDoc,
   formatEmailAddress,
@@ -25,17 +28,94 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   email: EmailMessageMetadata;
+  chatId?: string | null;
+  messageId?: string | null;
 };
 
-export function EmailPreviewModal({visible, onClose, email}: Props) {
+export function EmailPreviewModal({
+  visible,
+  onClose,
+  email,
+  chatId,
+  messageId,
+}: Props) {
   const {t} = useI18n();
   const {theme: mode, colors} = useTheme();
+  const {currentOrganizationMember} = useAuth();
   const insets = useSafeAreaInsets();
   const {height: winH} = useWindowDimensions();
   const isDark = mode === 'dark';
+  const organizationId = currentOrganizationMember?.organization_id;
 
-  const html = typeof email.html === 'string' ? email.html.trim() : '';
-  const text = typeof email.text === 'string' ? email.text.trim() : '';
+  const [fetched, setFetched] = useState<EmailMessageMetadata | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) {
+      setFetched(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    if (!organizationId || !chatId || !messageId) {
+      setFetched(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    fetchMessageEmail(organizationId, chatId, messageId)
+      .then(data => {
+        if (cancelled) return;
+        if (!data) {
+          setFetched(null);
+          return;
+        }
+        setFetched({
+          html: data.html || undefined,
+          text: data.text || undefined,
+          subject: data.subject || undefined,
+          from: data.from || undefined,
+          to: data.to || undefined,
+          date: data.date || undefined,
+        });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(
+          err instanceof Error
+            ? err.message
+            : t.messages.emailLoadError,
+        );
+        setFetched(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, organizationId, chatId, messageId, t.messages.emailLoadError]);
+
+  const merged: EmailMessageMetadata = {
+    ...email,
+    ...fetched,
+    html: fetched?.html ?? email.html,
+    text: fetched?.text ?? email.text,
+    subject: fetched?.subject ?? email.subject,
+    from: fetched?.from ?? email.from,
+    to: fetched?.to ?? email.to,
+    date: fetched?.date ?? email.date,
+  };
+
+  const html = typeof merged.html === 'string' ? merged.html.trim() : '';
+  const text = typeof merged.text === 'string' ? merged.text.trim() : '';
   const hasHtml = Boolean(html);
   const hasText = Boolean(text);
   const [viewMode, setViewMode] = useState<'html' | 'text'>(
@@ -48,11 +128,11 @@ export function EmailPreviewModal({visible, onClose, email}: Props) {
     }
   }, [visible, hasHtml]);
 
-  const from = formatEmailAddress(email.from);
-  const to = formatEmailAddress(email.to);
-  const dateLabel = formatEmailDate(email.date);
+  const from = formatEmailAddress(merged.from);
+  const to = formatEmailAddress(merged.to);
+  const dateLabel = formatEmailDate(merged.date);
   const subject =
-    (typeof email.subject === 'string' && email.subject.trim()) ||
+    (typeof merged.subject === 'string' && merged.subject.trim()) ||
     t.messages.emailNoSubject;
   const srcDoc = useMemo(
     () => (html ? buildEmailSrcDoc(html, isDark) : ''),
@@ -137,7 +217,7 @@ export function EmailPreviewModal({visible, onClose, email}: Props) {
             ) : null}
           </View>
 
-          {(hasHtml || hasText) && (
+          {(hasHtml || hasText) && !loading && (
             <View
               style={[
                 styles.tabs,
@@ -217,7 +297,20 @@ export function EmailPreviewModal({visible, onClose, email}: Props) {
                 backgroundColor: isDark ? '#030712' : '#FFFFFF',
               },
             ]}>
-            {viewMode === 'html' && hasHtml ? (
+            {loading ? (
+              <View style={styles.centerState}>
+                <ActivityIndicator color={colors.secondaryLabel} />
+                <Text style={[styles.stateText, {color: colors.secondaryLabel}]}>
+                  {t.messages.emailLoading}
+                </Text>
+              </View>
+            ) : error && !hasHtml && !hasText ? (
+              <View style={styles.centerState}>
+                <Text style={[styles.stateText, {color: colors.secondaryLabel}]}>
+                  {error}
+                </Text>
+              </View>
+            ) : viewMode === 'html' && hasHtml ? (
               <WebView
                 originWhitelist={['*']}
                 source={{html: srcDoc}}
@@ -332,6 +425,17 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: StyleSheet.hairlineWidth * 2,
     overflow: 'hidden',
+  },
+  centerState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    gap: 10,
+  },
+  stateText: {
+    fontSize: typography.subhead,
+    textAlign: 'center',
   },
   webview: {
     flex: 1,

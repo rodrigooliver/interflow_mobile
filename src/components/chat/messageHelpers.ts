@@ -718,14 +718,19 @@ export type EmailMessageMetadata = {
   text?: string;
   subject?: string;
   date?: string | Date;
-  from?: {
-    text?: string;
-    value?: Array<{name?: string; address?: string}>;
-  };
-  to?: {
-    text?: string;
-    value?: Array<{name?: string; address?: string}>;
-  };
+  has_email_body?: boolean;
+  from?:
+    | string
+    | {
+        text?: string;
+        value?: Array<{name?: string; address?: string}>;
+      };
+  to?:
+    | string
+    | {
+        text?: string;
+        value?: Array<{name?: string; address?: string}>;
+      };
 };
 
 function asTrimmedString(value: unknown): string {
@@ -737,7 +742,11 @@ export function hasEmailOriginalContent(
 ): metadata is EmailMessageMetadata {
   if (!metadata || typeof metadata !== 'object') return false;
   const email = metadata as EmailMessageMetadata;
-  return Boolean(asTrimmedString(email.html) || asTrimmedString(email.text));
+  return Boolean(
+    email.has_email_body === true ||
+      asTrimmedString(email.html) ||
+      asTrimmedString(email.text),
+  );
 }
 
 export function getEmailSubject(metadata: unknown): string {
@@ -749,6 +758,7 @@ export function formatEmailAddress(
   field?: EmailMessageMetadata['from'],
 ): string {
   if (!field) return '';
+  if (typeof field === 'string') return field.trim();
   const text = asTrimmedString(field.text);
   if (text) return text;
   const first = field.value?.[0];

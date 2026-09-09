@@ -56,6 +56,7 @@ import {
 } from '../../services/messageActions';
 import {usePermissions} from '../../hooks/usePermissions';
 import {supabase} from '../../lib/supabase';
+import {connectRealtime, subscribeChatThread} from '../../lib/realtimeClient';
 import {ChatThreadSkeleton, ChatThreadFooterSkeleton} from '../../components/Skeleton';
 import {FetchErrorState} from '../../components/FetchErrorState';
 import {
@@ -528,80 +529,56 @@ export function ChatThreadScreen({
   }, [load, chatId, refreshKey]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel(`native-messages-${chatId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'messages',
-          filter: `chat_id=eq.${chatId}`,
-        },
-        payload => {
-          if (payload.eventType === 'INSERT' && payload.new) {
-            const msg = payload.new as ChatMessage;
-            if (isHiddenFromChatThread(msg)) return;
-            setMessages(prev => {
-              if (prev.some(m => m.id === msg.id)) return prev;
-              return [msg, ...prev];
-            });
-            if (!atBottomRef.current) {
-              setNewMessagesCount(c => c + 1);
-              setShowScrollFab(true);
-            } else {
-              pinListToBottom();
-            }
-          } else if (payload.eventType === 'UPDATE' && payload.new) {
-            const msg = payload.new as ChatMessage;
-            if (isHiddenFromChatThread(msg)) {
-              setMessages(prev => prev.filter(m => m.id !== msg.id));
-              return;
-            }
-            setMessages(prev =>
-              prev.map(m => (m.id === msg.id ? {...m, ...msg} : m)),
-            );
-          } else if (payload.eventType === 'DELETE' && payload.old) {
-            const id = (payload.old as {id?: string}).id;
-            if (id) setMessages(prev => prev.filter(m => m.id !== id));
+    if (!orgId || !chatId) return;
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+
+    const refreshPinned = () => {
+      void supabase
+        .from('pinned_messages')
+        .select('id, message_id, comment, message:messages(content, type)')
+        .eq('chat_id', chatId)
+        .then(({data}) => {
+          if (data) setPinned(data as PinnedRow[]);
+        });
+    };
+
+    void connectRealtime(orgId).then(sock => {
+      if (cancelled || !sock) return;
+      unsub = subscribeChatThread(chatId, {
+        onMessageCreated: ({message}) => {
+          const msg = message as ChatMessage;
+          if (isHiddenFromChatThread(msg)) return;
+          setMessages(prev => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [msg, ...prev];
+          });
+          if (!atBottomRef.current) {
+            setNewMessagesCount(c => c + 1);
+            setShowScrollFab(true);
+          } else {
+            pinListToBottom();
           }
         },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'pinned_messages',
-          filter: `chat_id=eq.${chatId}`,
+        onMessageUpdated: ({message}) => {
+          const msg = message as ChatMessage;
+          if (isHiddenFromChatThread(msg)) {
+            setMessages(prev => prev.filter(m => m.id !== msg.id));
+            return;
+          }
+          setMessages(prev => prev.map(m => (m.id === msg.id ? {...m, ...msg} : m)));
         },
-        () => {
-          void supabase
-            .from('pinned_messages')
-            .select('id, message_id, comment, message:messages(content, type)')
-            .eq('chat_id', chatId)
-            .then(({data}) => {
-              if (data) setPinned(data as PinnedRow[]);
-            });
+        onMessageDeleted: ({messageId}) => {
+          if (messageId) setMessages(prev => prev.filter(m => m.id !== messageId));
         },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'chats',
-          filter: `id=eq.${chatId}`,
-        },
-        payload => {
-          const updated = payload.new as Partial<ChatListItem> | undefined;
+        onChatUpdated: ({chat}) => {
+          const updated = chat as Partial<ChatListItem> | undefined;
           if (!updated) return;
           setChatMeta(prev => {
             if (!prev) return prev;
             return {
               ...prev,
               ...updated,
-              // Relacionamentos embutidos não vêm no payload realtime
               customer: prev.customer,
               channel: prev.channel,
               channel_details: prev.channel_details,
@@ -611,13 +588,16 @@ export function ChatThreadScreen({
             };
           });
         },
-      )
-      .subscribe();
+        onPinnedCreated: refreshPinned,
+        onPinnedDeleted: refreshPinned,
+      });
+    });
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      unsub?.();
     };
-  }, [chatId, pinListToBottom]);
+  }, [orgId, chatId, pinListToBottom]);
 
   const openMoreActions = () => {
     const buttons: Array<{

@@ -28,7 +28,7 @@ import {
 } from '../../services/internalChatsApi';
 import type {InternalChatSummary} from '../../utils/internalChats';
 import {resolveInternalDisplayName} from '../../utils/internalChats';
-import {supabase} from '../../lib/supabase';
+import {connectRealtime, subscribeInbox} from '../../lib/realtimeClient';
 import {ChatListSkeleton} from '../../components/Skeleton';
 import {ChatItem} from '../../components/chat/ChatItem';
 import {FetchErrorState} from '../../components/FetchErrorState';
@@ -107,36 +107,27 @@ export function InternalChatsScreen({
 
   useEffect(() => {
     if (!orgId || !profileId) return;
-    const channel = supabase
-      .channel(`native-internal-chats-${orgId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chats',
-          filter: `organization_id=eq.${orgId}`,
-        },
-        () => {
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+
+    void connectRealtime(orgId).then(sock => {
+      if (cancelled || !sock) return;
+      unsub = subscribeInbox({
+        onChatUpdated: () => {
           void loadChats(true);
         },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chat_collaborators',
-          filter: `organization_id=eq.${orgId}`,
-        },
-        () => {
+        onChatDeleted: () => {
           void loadChats(true);
         },
-      )
-      .subscribe();
+        onCollaboratorsChanged: () => {
+          void loadChats(true);
+        },
+      });
+    });
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      unsub?.();
     };
   }, [orgId, profileId, loadChats]);
 

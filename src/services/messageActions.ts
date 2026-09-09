@@ -209,3 +209,32 @@ export function canDeleteMessageByAge(
   const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
   return hours <= 48;
 }
+
+/** GET /:orgId/chat/:chatId/message/:messageId/email */
+export async function fetchMessageEmail(
+  organizationId: string,
+  chatId: string,
+  messageId: string,
+) {
+  const headers = await authHeaders();
+  const response = await fetch(
+    `${env.API_BASE_URL}/${organizationId}/chat/${chatId}/message/${messageId}/email`,
+    {method: 'GET', headers},
+  );
+  const json = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    error?: string;
+    data?: {
+      html?: string | null;
+      text?: string | null;
+      subject?: string | null;
+      from?: string | null;
+      to?: string | null;
+      date?: string | null;
+    };
+  };
+  if (!response.ok || json?.success === false) {
+    throw new Error(json?.error || `Falha ao carregar e-mail (${response.status})`);
+  }
+  return json.data || null;
+}

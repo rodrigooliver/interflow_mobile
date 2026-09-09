@@ -41,7 +41,8 @@
     "react-native-url-polyfill": "^4.0.0",
     "react-native-video": "^6.14.0",
     "react-native-webview": "^13.16.0",
-    "rn-emoji-keyboard": "^1.7.0"
+    "rn-emoji-keyboard": "^1.7.0",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

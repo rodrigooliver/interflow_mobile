@@ -86,6 +86,7 @@ function WebViewModeApp({
     <View style={styles.flex}>
       <WebViewShell
         visible
+        uiMode="webview"
         sessionPayload={sessionPayload}
         onRemoteSession={handleRemoteSession}
         onRemoteLogout={handleRemoteLogout}

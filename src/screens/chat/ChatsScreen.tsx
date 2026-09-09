@@ -48,7 +48,7 @@ import {
   fetchChatsPage,
   type ChatListItem,
 } from '../../services/chatsApi';
-import {supabase} from '../../lib/supabase';
+import {connectRealtime, subscribeInbox} from '../../lib/realtimeClient';
 import {ChatListSkeleton} from '../../components/Skeleton';
 import {ChatItem} from '../../components/chat/ChatItem';
 import {ChatActionsSheet} from '../../components/chat/ChatActionsSheet';
@@ -410,25 +410,24 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
 
   useEffect(() => {
     if (!orgId) return;
-    const channel = supabase
-      .channel(`native-chats-${orgId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chats',
-          filter: `organization_id=eq.${orgId}`,
-        },
-        () => {
-          // Atualiza lista; counts só no open/refresh (evita RPC a cada evento)
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+
+    void connectRealtime(orgId).then(sock => {
+      if (cancelled || !sock) return;
+      unsub = subscribeInbox({
+        onChatUpdated: () => {
           void loadChats(true);
         },
-      )
-      .subscribe();
+        onChatDeleted: () => {
+          void loadChats(true);
+        },
+      });
+    });
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      unsub?.();
     };
   }, [orgId, loadChats]);
 

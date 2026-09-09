@@ -95,6 +95,9 @@ const pt = {
     privateNote: 'Nota interna',
     context: 'Contexto',
     mediaAbsent: 'Mídia indisponível',
+    mediaTooLargeTitle: 'Arquivo muito grande',
+    mediaTooLarge:
+      'Solicite compactar, enviar link ou ver no dispositivo.',
     openAudio: 'Ouvir áudio',
     openVideo: 'Abrir vídeo',
     openMap: 'Abrir no mapa',
@@ -114,6 +117,8 @@ const pt = {
     emailHtml: 'HTML',
     emailText: 'Texto',
     emailEmpty: 'Sem conteúdo',
+    emailLoading: 'Carregando e-mail...',
+    emailLoadError: 'Não foi possível carregar o e-mail',
   },
   messageActions: {
     reply: 'Responder',
@@ -343,6 +348,9 @@ const en: Dict = {
     privateNote: 'Internal note',
     context: 'Context',
     mediaAbsent: 'Media unavailable',
+    mediaTooLargeTitle: 'File too large',
+    mediaTooLarge:
+      'Ask to compress, send a link, or view on the device.',
     openAudio: 'Play audio',
     openVideo: 'Open video',
     openMap: 'Open in maps',
@@ -362,6 +370,8 @@ const en: Dict = {
     emailHtml: 'HTML',
     emailText: 'Text',
     emailEmpty: 'No content',
+    emailLoading: 'Loading email...',
+    emailLoadError: 'Could not load the email',
   },
   messageActions: {
     reply: 'Reply',
@@ -583,6 +593,9 @@ const es: Dict = {
     privateNote: 'Nota interna',
     context: 'Contexto',
     mediaAbsent: 'Medio no disponible',
+    mediaTooLargeTitle: 'Archivo demasiado grande',
+    mediaTooLarge:
+      'Solicite comprimir, enviar enlace o ver en el dispositivo.',
     openAudio: 'Escuchar audio',
     openVideo: 'Abrir video',
     openMap: 'Abrir en el mapa',
@@ -602,6 +615,8 @@ const es: Dict = {
     emailHtml: 'HTML',
     emailText: 'Texto',
     emailEmpty: 'Sin contenido',
+    emailLoading: 'Cargando correo...',
+    emailLoadError: 'No se pudo cargar el correo',
   },
   messageActions: {
     reply: 'Responder',

@@ -353,6 +353,11 @@ export interface WebViewShellProps {
     currentPath: string | null;
   }) => void;
   disableOneSignalInit?: boolean;
+  /**
+   * hybrid = chat nativo + WebView embutido (chrome/voltar especiais na web)
+   * webview = app full WebView (produção clássica; bottom nav e voltar web normais)
+   */
+  uiMode?: 'hybrid' | 'webview';
 }
 
 const WebViewShell = ({
@@ -368,6 +373,7 @@ const WebViewShell = ({
   onCloseWeb,
   onChromeStateChange,
   disableOneSignalInit = false,
+  uiMode = 'webview',
 }: WebViewShellProps) => {
   const webViewRef = useRef<WebView | null>(null);
   const sessionPayloadRef = useRef(sessionPayload);
@@ -1415,12 +1421,15 @@ const WebViewShell = ({
   };
 
   // Otimizar o JavaScript injetado para reduzir uso de memória
+  const isHybridMode = uiMode === 'hybrid';
   const INJECTED_JAVASCRIPT = `
     (function() {
       try {
         // Configurar informações do ambiente nativo
         window.nativeEnvironment = {
           isNativeApp: true,
+          uiMode: '${uiMode}',
+          isNativeHybrid: ${isHybridMode ? 'true' : 'false'},
           platform: '${Platform.OS}',
           version: '${Platform.Version}',
           appVersion: '1.0.0',
@@ -1432,6 +1441,9 @@ const WebViewShell = ({
 
         // Manter compatibilidade com código existente
         window.isNativeApp = true;
+        // hybrid = chrome embutido / closeWeb; webview = app full WebView (produção)
+        window.nativeUiMode = '${uiMode}';
+        window.isNativeHybrid = ${isHybridMode ? 'true' : 'false'};
 
         // Ponte de auth nativo ↔ web (não usa window.supabase — a SPA instala __nativeAuth)
         window.__nativeAuth = window.__nativeAuth || {
