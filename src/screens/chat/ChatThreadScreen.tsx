@@ -579,7 +579,9 @@ export function ChatThreadScreen({
             return {
               ...prev,
               ...updated,
-              customer: prev.customer,
+              customer: updated.customer
+                ? {...(prev.customer || {}), ...updated.customer}
+                : prev.customer,
               channel: prev.channel,
               channel_details: prev.channel_details,
               team: prev.team,

@@ -1,3 +1,4 @@
+import {AppState, type AppStateStatus} from 'react-native';
 import {io, type Socket} from 'socket.io-client';
 import {supabase} from './supabase';
 import ENV from '../config/env';
@@ -29,6 +30,7 @@ let status: Status = 'idle';
 let currentOrgId: string | null = null;
 const subscribedChats = new Map<string, number>();
 let connectingPromise: Promise<Socket | null> | null = null;
+let lifecycleInstalled = false;
 
 function setStatus(next: Status) {
   status = next;
@@ -39,6 +41,48 @@ function socketOrigin() {
   return String(ENV.API_BASE_URL || '')
     .replace(/\/$/, '')
     .replace(/\/api$/, '');
+}
+
+function resubscribeRooms() {
+  if (!socket) return;
+  for (const chatId of subscribedChats.keys()) {
+    socket.emit('subscribe:chat', {chatId});
+  }
+}
+
+function bindSocketHandlers(target: Socket) {
+  target.on('connect', () => {
+    setStatus('connected');
+    resubscribeRooms();
+  });
+  target.on('disconnect', () => setStatus('disconnected'));
+  target.on('connect_error', () => setStatus('disconnected'));
+  target.io.on('reconnect_attempt', async () => {
+    const token = await getAccessToken();
+    if (token && currentOrgId) {
+      target.auth = {token, organizationId: currentOrgId};
+    }
+  });
+}
+
+function installRealtimeLifecycle() {
+  if (lifecycleInstalled) return;
+  lifecycleInstalled = true;
+
+  AppState.addEventListener('change', (nextState: AppStateStatus) => {
+    if (nextState === 'active' && currentOrgId) {
+      void connectRealtime(currentOrgId);
+    }
+  });
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (!socket || !currentOrgId || !session?.access_token) return;
+    socket.auth = {token: session.access_token, organizationId: currentOrgId};
+    if (!socket.connected) {
+      setStatus('connecting');
+      socket.connect();
+    }
+  });
 }
 
 function retainChat(chatId: string) {
@@ -82,7 +126,7 @@ async function waitForExistingSocket(existing: Socket) {
     const timeout = setTimeout(() => {
       cleanup();
       resolve(existing.connected ? existing : null);
-    }, 3000);
+    }, 8000);
     const cleanup = () => {
       clearTimeout(timeout);
       existing.off('connect', onConnect);
@@ -95,24 +139,29 @@ async function waitForExistingSocket(existing: Socket) {
 
 export async function connectRealtime(organizationId: string) {
   if (!organizationId) return null;
-  if (socket?.connected && currentOrgId === organizationId) return socket;
+  installRealtimeLifecycle();
+
   if (connectingPromise && currentOrgId === organizationId) return connectingPromise;
+
+  const token = await getAccessToken();
+  if (!token) return null;
+
   if (socket && currentOrgId === organizationId) {
+    socket.auth = {token, organizationId};
+    if (socket.connected) return socket;
+    setStatus('connecting');
+    socket.connect();
     return waitForExistingSocket(socket);
+  }
+
+  if (socket && currentOrgId !== organizationId) {
+    socket.disconnect();
+    socket = null;
   }
 
   currentOrgId = organizationId;
   connectingPromise = (async () => {
     try {
-      const token = await getAccessToken();
-      if (!token) return null;
-
-      if (socket) {
-        socket.removeAllListeners();
-        socket.disconnect();
-        socket = null;
-      }
-
       setStatus('connecting');
       socket = io(socketOrigin(), {
         transports: ['websocket'],
@@ -123,14 +172,7 @@ export async function connectRealtime(organizationId: string) {
         reconnectionDelayMax: 10000,
       });
 
-      socket.on('connect', () => {
-        setStatus('connected');
-        for (const chatId of subscribedChats.keys()) {
-          socket?.emit('subscribe:chat', {chatId});
-        }
-      });
-      socket.on('disconnect', () => setStatus('disconnected'));
-      socket.on('connect_error', () => setStatus('disconnected'));
+      bindSocketHandlers(socket);
 
       await waitForExistingSocket(socket);
       return socket?.connected ? socket : null;
@@ -140,6 +182,10 @@ export async function connectRealtime(organizationId: string) {
   })();
 
   return connectingPromise;
+}
+
+export async function ensureRealtimeConnected(organizationId: string) {
+  return connectRealtime(organizationId);
 }
 
 export function subscribeInbox(handlers: InboxHandlers) {
@@ -187,7 +233,7 @@ export function subscribeChatThread(chatId: string, handlers: ThreadHandlers) {
   const onChatDeleted = (payload: {chatId: string}) => {
     if (payload.chatId === chatId) handlers.onChatDeleted?.(payload);
   };
-  const onPinnedCreated = (payload: {chatId: string}) => {
+  const onPinnedCreated = (payload: {chatId: string; pin: Record<string, unknown>}) => {
     if (payload.chatId === chatId) handlers.onPinnedCreated?.(payload);
   };
   const onPinnedDeleted = (payload: {chatId: string; pinId: string}) => {
