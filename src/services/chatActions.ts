@@ -162,6 +162,16 @@ export async function transferToTeam(
   });
 }
 
+export async function transferToTeamRotation(
+  organizationId: string,
+  chatId: string,
+) {
+  return apiJson(`/${organizationId}/chat/${chatId}/transfer-to-team-rotation`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
 export async function transferToCustomer(
   organizationId: string,
   chatId: string,
@@ -263,6 +273,27 @@ export async function sendMessageSequence(
     method: 'POST',
     body: payload,
   });
+}
+
+export async function getFlowSession(organizationId: string, sessionId: string) {
+  return apiJson<{success?: boolean; data?: Record<string, unknown>}>(
+    `/${organizationId}/chat/flow-sessions/${sessionId}`,
+  );
+}
+
+export async function updateFlowSession(
+  organizationId: string,
+  sessionId: string,
+  patch: {
+    variables?: unknown;
+    timeout_at?: string | null;
+    current_node_id?: string;
+  },
+) {
+  return apiJson<{success?: boolean; data?: Record<string, unknown>}>(
+    `/${organizationId}/chat/flow-sessions/${sessionId}`,
+    {method: 'PATCH', body: patch},
+  );
 }
 
 /** Assumir atendimento (legado — preferir attendChat). */

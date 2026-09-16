@@ -10,8 +10,7 @@ import {
 import {Bot, Pause, Settings, X} from 'lucide-react-native';
 import {useTheme} from '../../contexts/ThemeContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
-import {supabase} from '../../lib/supabase';
-import {pauseFlow} from '../../services/chatActions';
+import {getFlowSession, pauseFlow} from '../../services/chatActions';
 import {chatModalStyles} from './chatModalStyles';
 import {ChatSheetModal} from './ChatSheetModal';
 import {FlowSessionEditModal} from './FlowSessionEditModal';
@@ -49,20 +48,16 @@ export function ActiveFlowModal({
     setFlowName(flowNameProp || '');
     if (flowNameProp || !flowSessionId) return;
 
-    void supabase
-      .from('flow_sessions')
-      .select('flows:bot_id(name)')
-      .eq('id', flowSessionId)
-      .maybeSingle()
-      .then(({data}) => {
-        const flows = data?.flows as
-          | {name?: string}
-          | Array<{name?: string}>
-          | null
-          | undefined;
+    void getFlowSession(organizationId, flowSessionId)
+      .then(response => {
+        const data = (response.data || response) as {
+          flows?: {name?: string} | Array<{name?: string}> | null;
+        };
+        const flows = data?.flows;
         const name = Array.isArray(flows) ? flows[0]?.name : flows?.name;
         if (name) setFlowName(name);
-      });
+      })
+      .catch(() => undefined);
   }, [visible, flowSessionId, flowNameProp]);
 
   const handlePause = async () => {
@@ -153,6 +148,7 @@ export function ActiveFlowModal({
 
       <FlowSessionEditModal
         visible={editOpen}
+        organizationId={organizationId}
         flowSessionId={flowSessionId}
         onClose={() => setEditOpen(false)}
       />

@@ -12,7 +12,7 @@ import {
 import {Save, X} from 'lucide-react-native';
 import {useTheme} from '../../contexts/ThemeContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
-import {supabase} from '../../lib/supabase';
+import {getFlowSession, updateFlowSession} from '../../services/chatActions';
 import {chatModalStyles} from './chatModalStyles';
 import {ChatSheetModal} from './ChatSheetModal';
 
@@ -43,6 +43,7 @@ type FlowSession = {
 
 type Props = {
   visible: boolean;
+  organizationId: string;
   flowSessionId: string;
   onClose: () => void;
   onSessionUpdated?: () => void;
@@ -59,6 +60,7 @@ function toLocalInputValue(iso: string | null): string {
 
 export function FlowSessionEditModal({
   visible,
+  organizationId,
   flowSessionId,
   onClose,
   onSessionUpdated,
@@ -76,25 +78,14 @@ export function FlowSessionEditModal({
     if (!flowSessionId) return;
     setLoading(true);
     try {
-      const {data, error} = await supabase
-        .from('flow_sessions')
-        .select(
-          `
-          id,
-          current_node_id,
-          timeout_at,
-          variables,
-          flows:bot_id (
-            id,
-            name,
-            nodes
-          )
-        `,
-        )
-        .eq('id', flowSessionId)
-        .single();
-
-      if (error) throw error;
+      const response = await getFlowSession(organizationId, flowSessionId);
+      const data = (response.data || response) as {
+        id: string;
+        current_node_id: string | null;
+        timeout_at: string | null;
+        variables?: FlowVariable[];
+        flows?: FlowSession['flows'] | FlowSession['flows'][];
+      };
 
       const flowsRaw = data.flows;
       const flows = Array.isArray(flowsRaw) ? flowsRaw[0] : flowsRaw;
@@ -116,7 +107,7 @@ export function FlowSessionEditModal({
     } finally {
       setLoading(false);
     }
-  }, [flowSessionId]);
+  }, [flowSessionId, organizationId]);
 
   useEffect(() => {
     if (visible && flowSessionId) {
@@ -152,11 +143,9 @@ export function FlowSessionEditModal({
         }
         timeoutValue = d.toISOString();
       }
-      const {error} = await supabase
-        .from('flow_sessions')
-        .update({timeout_at: timeoutValue})
-        .eq('id', flowSessionId);
-      if (error) throw error;
+      await updateFlowSession(organizationId, flowSessionId, {
+        timeout_at: timeoutValue,
+      });
       setSession(prev => (prev ? {...prev, timeout_at: timeoutValue} : prev));
       onSessionUpdated?.();
       Alert.alert('Ok', 'Timeout atualizado');
@@ -171,11 +160,9 @@ export function FlowSessionEditModal({
     if (!session || !selectedNodeId) return;
     setSaving(true);
     try {
-      const {error} = await supabase
-        .from('flow_sessions')
-        .update({current_node_id: selectedNodeId})
-        .eq('id', flowSessionId);
-      if (error) throw error;
+      await updateFlowSession(organizationId, flowSessionId, {
+        current_node_id: selectedNodeId,
+      });
       setSession(prev =>
         prev ? {...prev, current_node_id: selectedNodeId} : prev,
       );
@@ -195,11 +182,7 @@ export function FlowSessionEditModal({
       const updated = session.variables.map(v =>
         v.id === editingVarId ? {...v, value: editingVarValue} : v,
       );
-      const {error} = await supabase
-        .from('flow_sessions')
-        .update({variables: updated})
-        .eq('id', flowSessionId);
-      if (error) throw error;
+      await updateFlowSession(organizationId, flowSessionId, {variables: updated});
       setSession(prev => (prev ? {...prev, variables: updated} : prev));
       setEditingVarId(null);
       onSessionUpdated?.();
