@@ -1,4 +1,3 @@
-import {supabase} from '../lib/supabase';
 import env from '../config/env';
 
 async function authHeaders(json = true) {
@@ -73,13 +72,9 @@ export async function markChatUnread(
   });
 }
 
-/** @deprecated prefer markChatUnread via API */
-export async function markChatRead(chatId: string) {
-  const {error} = await supabase
-    .from('chats')
-    .update({unread_count: 0})
-    .eq('id', chatId);
-  if (error) throw error;
+/** Marca como lido via API (mesmo contrato de markChatUnread). */
+export async function markChatRead(organizationId: string, chatId: string) {
+  return markChatUnread(organizationId, chatId, false);
 }
 
 export async function pinChat(
@@ -296,11 +291,7 @@ export async function updateFlowSession(
   );
 }
 
-/** Assumir atendimento (legado — preferir attendChat). */
-export async function assignChatToMe(chatId: string, userId: string) {
-  const {error} = await supabase
-    .from('chats')
-    .update({assigned_to: userId, status: 'in_progress'})
-    .eq('id', chatId);
-  if (error) throw error;
+/** Assumir atendimento — delega para POST /attend. */
+export async function assignChatToMe(organizationId: string, chatId: string) {
+  return attendChat(organizationId, chatId);
 }

@@ -190,7 +190,7 @@ export function ChatActionsSheet({
     onPress: () =>
       runAction('read', async () => {
         if (unread) {
-          await markChatRead(activeChat.id);
+          await markChatRead(organizationId, activeChat.id);
           onUpdated(activeChat.id, {unread_count: 0});
         } else {
           const res = (await markChatUnread(
