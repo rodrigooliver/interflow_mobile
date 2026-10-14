@@ -1,32 +1,27 @@
 /**
  * Interflow Mobile App
- * Modos: webview | hybrid
- * Login: sempre no WebView — o nativo só espelha o JWT.
+ * WebView do app web. O loading de abertura é o BootLoadingScreen nativo.
+ * Login na web; JWT espelhado no nativo.
  *
  * @format
  */
 
 import React, {useEffect, useState, useCallback} from 'react';
-import {View, StyleSheet, Text, TouchableOpacity} from 'react-native';
+import {View, StyleSheet} from 'react-native';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {
   SafeAreaProvider,
-  SafeAreaView,
   initialWindowMetrics,
 } from 'react-native-safe-area-context';
 import * as Sentry from '@sentry/react-native';
-import env, {type ChatUIMode} from './src/config/env';
-import {setChatUiModeOverride} from './src/config/chatUiMode';
-import {AuthProvider} from './src/contexts/AuthContext';
+import env from './src/config/env';
 import {ThemeProvider} from './src/contexts/ThemeContext';
 import {I18nProvider} from './src/contexts/I18nContext';
-import {HybridApp} from './src/navigation/HybridApp';
 import WebViewShell from './src/webview/WebViewShell';
 import {
   BootLoadingScreen,
   LOADING_BG_DARK,
 } from './src/components/LoadingScreen';
-import {brand, radii, spacing} from './src/theme/tokens';
 import type {AuthSessionPayload} from './src/bridge/authProtocol';
 import {
   clearMirroredSession,
@@ -35,6 +30,7 @@ import {
 } from './src/services/sessionMirror';
 import {
   loadAppPreferences,
+  saveUiModePreference,
   type AppPreferences,
 } from './src/services/appPreferences';
 
@@ -44,14 +40,10 @@ Sentry.init({
 });
 
 /**
- * Modo webview: shell clássico.
- * Login na web; JWT espelhado no nativo (AsyncStorage + Supabase client).
+ * App em WebView. O loading de abertura continua o BootLoadingScreen atual.
+ * Login na web; JWT espelhado no nativo.
  */
-function WebViewModeApp({
-  onModeChanged,
-}: {
-  onModeChanged?: (mode: ChatUIMode) => void;
-}) {
+function WebViewModeApp() {
   const [sessionPayload, setSessionPayload] =
     useState<AuthSessionPayload | null>(null);
 
@@ -77,11 +69,6 @@ function WebViewModeApp({
     await clearMirroredSession();
   }, []);
 
-  const switchToNative = useCallback(async () => {
-    await setChatUiModeOverride('hybrid');
-    onModeChanged?.('hybrid');
-  }, [onModeChanged]);
-
   return (
     <View style={styles.flex}>
       <WebViewShell
@@ -90,50 +77,9 @@ function WebViewModeApp({
         sessionPayload={sessionPayload}
         onRemoteSession={handleRemoteSession}
         onRemoteLogout={handleRemoteLogout}
-        onReady={() => {
-          void onModeChanged;
-        }}
       />
-      {sessionPayload ? (
-        <SafeAreaView
-          style={styles.webModeBar}
-          edges={['top']}
-          pointerEvents="box-none">
-          <TouchableOpacity
-            style={styles.webModeBtn}
-            onPress={() => void switchToNative()}>
-            <Text style={styles.webModeText}>Nativo</Text>
-          </TouchableOpacity>
-        </SafeAreaView>
-      ) : null}
     </View>
   );
-}
-
-function HybridModeApp({
-  onModeChanged,
-}: {
-  onModeChanged?: (mode: ChatUIMode) => void;
-}) {
-  return (
-    <AuthProvider>
-      <HybridApp onModeChanged={onModeChanged} />
-    </AuthProvider>
-  );
-}
-
-function RootSwitcher({initialMode}: {initialMode: ChatUIMode}) {
-  const [mode, setMode] = useState<ChatUIMode>(initialMode);
-
-  const handleModeChanged = useCallback((next: ChatUIMode) => {
-    setMode(next);
-  }, []);
-
-  if (mode === 'hybrid') {
-    return <HybridModeApp onModeChanged={handleModeChanged} />;
-  }
-
-  return <WebViewModeApp onModeChanged={handleModeChanged} />;
 }
 
 function App() {
@@ -141,9 +87,14 @@ function App() {
 
   useEffect(() => {
     loadAppPreferences()
-      .then(setPrefs)
+      .then(async loaded => {
+        if (loaded.uiMode !== 'webview') {
+          await saveUiModePreference('webview');
+        }
+        setPrefs({...loaded, uiMode: 'webview'});
+      })
       .catch(() =>
-        setPrefs({theme: 'light', locale: 'pt', uiMode: null}),
+        setPrefs({theme: 'light', locale: 'pt', uiMode: 'webview'}),
       );
   }, []);
 
@@ -160,7 +111,7 @@ function App() {
         ) : (
           <ThemeProvider initialTheme={prefs.theme}>
             <I18nProvider initialLocale={prefs.locale}>
-              <RootSwitcher initialMode={prefs.uiMode || env.CHAT_UI_MODE} />
+              <WebViewModeApp />
             </I18nProvider>
           </ThemeProvider>
         )}
@@ -171,24 +122,6 @@ function App() {
 
 const styles = StyleSheet.create({
   flex: {flex: 1},
-  webModeBar: {
-    position: 'absolute',
-    top: 0,
-    right: spacing.md,
-    zIndex: 120,
-  },
-  webModeBtn: {
-    marginTop: spacing.sm,
-    backgroundColor: brand.blue,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-  },
-  webModeText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
 });
 
 export default Sentry.wrap(App);
