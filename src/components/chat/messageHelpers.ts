@@ -82,6 +82,8 @@ export const SYSTEM_EVENT_TYPES = new Set([
   'tag_removed',
   'stage_update',
   'task',
+  'flow_paused',
+  'flow_started',
 ]);
 
 export type MessageSideContext = {
@@ -383,6 +385,12 @@ type SystemLabels = {
   noStage?: string;
   task: string;
   info: string;
+  flowPaused: string;
+  flowPausedWithFlow: string;
+  flowPausedOnAttend: string;
+  flowPausedOnAttendWithFlow: string;
+  flowStarted: string;
+  flowStartedWithFlow: string;
   privateNote: string;
   mediaAbsent: string;
   openAudio: string;
@@ -434,6 +442,9 @@ export function getSystemEventIconColor(
       return isDark ? '#60A5FA' : '#3B82F6';
     case 'task':
       return isDark ? '#34D399' : '#059669';
+    case 'flow_paused':
+    case 'flow_started':
+      return isDark ? '#60A5FA' : '#3B82F6';
     default:
       return isDark ? '#9CA3AF' : '#9CA3AF';
   }
@@ -590,6 +601,27 @@ export function getSystemEventLabel(
       return msg.content?.trim() || labels.task;
     case 'info':
       return msg.content?.trim() || labels.info;
+    case 'flow_paused': {
+      const pauseReason = metadata.reason as string | undefined;
+      const flowName =
+        typeof metadata.flow_name === 'string' ? metadata.flow_name : '';
+      const template =
+        pauseReason === 'attend'
+          ? flowName
+            ? labels.flowPausedOnAttendWithFlow
+            : labels.flowPausedOnAttend
+          : flowName
+            ? labels.flowPausedWithFlow
+            : labels.flowPaused;
+      return withName(template).replace('{flow}', flowName);
+    }
+    case 'flow_started': {
+      const flowName =
+        typeof metadata.flow_name === 'string' ? metadata.flow_name : '';
+      return withName(
+        flowName ? labels.flowStartedWithFlow : labels.flowStarted,
+      ).replace('{flow}', flowName);
+    }
     default:
       return msg.content?.trim() || type || labels.info;
   }

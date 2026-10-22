@@ -47,6 +47,7 @@ import {
   Building,
   SquareCheck,
   Mail,
+  Pause,
 } from 'lucide-react-native';
 import {useI18n} from '../../contexts/I18nContext';
 import {useTheme} from '../../contexts/ThemeContext';
@@ -550,6 +551,10 @@ function renderSystemIcon(type: string, color: string): React.ReactNode {
     case 'tag_added':
     case 'tag_removed':
       return <Tag {...props} />;
+    case 'flow_paused':
+      return <Pause {...props} />;
+    case 'flow_started':
+      return <Play {...props} />;
     default:
       return null;
   }
@@ -1257,6 +1262,12 @@ export const MessageBubble = memo(function MessageBubble({
       noStage: t.messages.noStage,
       task: t.messages.task,
       info: t.messages.info,
+      flowPaused: t.messages.flowPaused,
+      flowPausedWithFlow: t.messages.flowPausedWithFlow,
+      flowPausedOnAttend: t.messages.flowPausedOnAttend,
+      flowPausedOnAttendWithFlow: t.messages.flowPausedOnAttendWithFlow,
+      flowStarted: t.messages.flowStarted,
+      flowStartedWithFlow: t.messages.flowStartedWithFlow,
       privateNote: t.messages.privateNote,
       mediaAbsent: t.messages.mediaAbsent,
       mediaTooLargeTitle: t.messages.mediaTooLargeTitle,

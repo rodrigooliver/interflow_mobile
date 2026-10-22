@@ -81,6 +81,9 @@ type QuickFilterItem = {
   isDefault?: boolean;
   isCustom?: boolean;
   isVisible?: boolean;
+  kind?: 'filter' | 'group';
+  parentId?: string | null;
+  children?: QuickFilterItem[];
   visibilityScope?: string;
   visibilityTeamIds?: string[];
   visibilityRoles?: string[];
@@ -151,6 +154,8 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
           isDefault: Boolean(f.isDefault),
           isCustom: Boolean(f.isCustom),
           isVisible: f.isVisible !== false,
+          kind: f.kind === 'group' ? 'group' as const : 'filter' as const,
+          parentId: typeof f.parentId === 'string' ? f.parentId : null,
           visibilityScope: f.visibilityScope as string | undefined,
           visibilityTeamIds: (f.visibilityTeamIds as string[]) || [],
           visibilityRoles: (f.visibilityRoles as string[]) || [],
@@ -169,17 +174,17 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
 
   const visibleFilters = useMemo((): QuickFilterItem[] => {
     const role = currentOrganizationMember?.role;
-    return orgQuickFilters.filter((f: QuickFilterItem) => {
+    const allowed = orgQuickFilters.filter((f: QuickFilterItem) => {
       if (!f.visibilityScope || f.visibilityScope === 'all') return true;
       if (f.visibilityScope === 'roles' && role) {
         return (f.visibilityRoles || []).includes(role);
       }
       if (f.visibilityScope === 'users') {
-        const allowed = f.visibilityUserIds || [];
+        const allowedUsers = f.visibilityUserIds || [];
         return (
-          (!!userId && allowed.includes(userId)) ||
+          (!!userId && allowedUsers.includes(userId)) ||
           (!!currentOrganizationMember?.profile_id &&
-            allowed.includes(currentOrganizationMember.profile_id))
+            allowedUsers.includes(currentOrganizationMember.profile_id))
         );
       }
       if (f.visibilityScope === 'teams') {
@@ -188,6 +193,27 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
       }
       return true;
     });
+    const childrenByParent = new Map<string, QuickFilterItem[]>();
+    for (const filter of allowed) {
+      if (filter.parentId) {
+        const list = childrenByParent.get(filter.parentId) || [];
+        list.push(filter);
+        childrenByParent.set(filter.parentId, list);
+      }
+    }
+    return allowed
+      .filter(filter => !filter.parentId)
+      .map(filter => {
+        if (filter.kind === 'group') {
+          const children = (childrenByParent.get(filter.id) || []).filter(
+            child => child.kind !== 'group',
+          );
+          if (children.length === 0) return null;
+          return {...filter, children};
+        }
+        return filter;
+      })
+      .filter((filter): filter is QuickFilterItem => Boolean(filter));
   }, [orgQuickFilters, currentOrganizationMember, userId]);
 
   const defaultFilterId =
@@ -280,9 +306,11 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
 
   const filtersPanelValue = useMemo((): ChatFilterRpcInput | null => {
     if (!orgId || !userId) return null;
-    const filter = visibleFilters.find(
-      (f: QuickFilterItem) => f.id === selectedFilter,
-    );
+    const filter =
+      visibleFilters.find((f: QuickFilterItem) => f.id === selectedFilter) ||
+      visibleFilters
+        .flatMap(f => f.children || [])
+        .find((f: QuickFilterItem) => f.id === selectedFilter);
     let input = emptyFilterInput(orgId, userId, selectedFilter);
     input = applyQuickFilterCriteria(input, selectedFilter, filter?.filters, {
       isDefault: filter?.isDefault,
@@ -312,9 +340,11 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
   const buildInput = useCallback(
     (filterId: string, offset = 0, searchText = search) => {
       if (!orgId || !userId) return null;
-      const filter = visibleFilters.find(
-        (f: QuickFilterItem) => f.id === filterId,
-      );
+      const filter =
+        visibleFilters.find((f: QuickFilterItem) => f.id === filterId) ||
+        visibleFilters
+          .flatMap(f => f.children || [])
+          .find((f: QuickFilterItem) => f.id === filterId);
       let input = emptyFilterInput(orgId, userId, filterId);
       input = applyQuickFilterCriteria(input, filterId, filter?.filters, {
         isDefault: filter?.isDefault,
@@ -382,7 +412,10 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
   const loadCounts = useCallback(async () => {
     if (!orgId || !userId) return;
     try {
-      const next = await fetchBatchFilterCounts(orgId, userId, visibleFilters);
+      const countable = visibleFilters.flatMap(filter =>
+        filter.kind === 'group' ? filter.children || [] : [filter],
+      );
+      const next = await fetchBatchFilterCounts(orgId, userId, countable);
       setCounts(next);
     } catch (e) {
       console.warn('[ChatsScreen] counts failed', e);
@@ -507,17 +540,46 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.filtersRow}
             renderItem={({item}) => {
-              const active = item.id === selectedFilter;
+              const childActive = (item.children || []).some(
+                child => child.id === selectedFilter,
+              );
+              const active = item.id === selectedFilter || childActive;
               const filterColor = resolveQuickFilterColor(item.color);
-              const count =
-                item.showCount && typeof counts[item.id] === 'number'
-                  ? counts[item.id]
+              const groupCount =
+                item.kind === 'group'
+                  ? (item.children || []).reduce((sum, child) => {
+                      if (!child.showCount) return sum;
+                      const value = counts[child.id];
+                      return sum + (typeof value === 'number' ? value : 0);
+                    }, 0)
                   : null;
+              const count =
+                item.kind === 'group'
+                  ? groupCount
+                  : item.showCount && typeof counts[item.id] === 'number'
+                    ? counts[item.id]
+                    : null;
               const showBadge = count != null && count > 0;
 
               return (
                 <TouchableOpacity
-                  onPress={() => setSelectedFilter(item.id)}
+                  onPress={() => {
+                    if (item.kind === 'group') {
+                      Alert.alert(
+                        item.label,
+                        undefined,
+                        [
+                          ...(item.children || []).map(child => ({
+                            text: child.label,
+                            onPress: () => setSelectedFilter(child.id),
+                          })),
+                          {text: t.chats.cancel, style: 'cancel' as const},
+                        ],
+                      );
+                      return;
+                    }
+                    setSelectedFilter(item.id);
+                  }}
                   style={[
                     styles.segment,
                     active
@@ -536,7 +598,7 @@ export function ChatsScreen({onOpenChat, onOpenWeb}: ChatsScreenProps) {
                     numberOfLines={1}>
                     {item.label}
                   </Text>
-                  {item.showCount ? (
+                  {item.showCount || item.kind === 'group' ? (
                     <View
                       style={[
                         styles.countBadge,
