@@ -34,6 +34,14 @@ target 'Interflow_mobile' do
     
     # Resolve o erro de dSYM ausente para o hermes.framework 
     installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        # Xcode 26 só aceita IPHONEOS_DEPLOYMENT_TARGET >= 15.0
+        current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current.nil? || current.to_f < 15.0
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+        end
+      end
+
       if target.name == 'hermes-engine'
         target.build_configurations.each do |config|
           # Desativa a geração de dSYM para hermes

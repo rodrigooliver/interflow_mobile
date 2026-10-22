@@ -12,17 +12,42 @@ class AppDelegate: RCTAppDelegate {
     self.moduleName = "Interflow_mobile"
     self.dependencyProvider = RCTAppDependencyProvider()
     self.initialProps = [:]
+    // iOS 26+/27 exige UIScene; a window é criada em scene(_:willConnectTo:)
+    self.automaticallyLoadReactNativeWindow = false
 
-    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 
-    if let rootView = self.window.rootViewController?.view {
-      rootView.backgroundColor = Self.bootBg
-    }
-    self.window.backgroundColor = Self.bootBg
+  override func application(
+    _ application: UIApplication,
+    configurationForConnecting connectingSceneSession: UISceneSession,
+    options: UIScene.ConnectionOptions
+  ) -> UISceneConfiguration {
+    let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    config.delegateClass = AppDelegate.self
+    return config
+  }
+
+  override func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+    guard let windowScene = scene as? UIWindowScene else { return }
+
+    let rootView = self.rootViewFactory().view(
+      withModuleName: self.moduleName ?? "Interflow_mobile",
+      initialProperties: self.initialProps,
+      launchOptions: nil
+    )
+    rootView.backgroundColor = Self.bootBg
+
+    let rootViewController = self.createRootViewController()
+    self.setRootView(rootView, toRootViewController: rootViewController)
+
+    let window = UIWindow(windowScene: windowScene)
+    window.backgroundColor = Self.bootBg
+    window.rootViewController = rootViewController
+    window.makeKeyAndVisible()
+    self.window = window
 
     RNSplashScreen.show()
-
-    return result
   }
 
   override func sourceURL(for bridge: RCTBridge) -> URL? {
