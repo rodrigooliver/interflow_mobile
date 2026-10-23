@@ -51,6 +51,7 @@ import {
 } from 'lucide-react-native';
 import {useI18n} from '../../contexts/I18nContext';
 import {useTheme} from '../../contexts/ThemeContext';
+import {useAuth} from '../../contexts/AuthContext';
 import {brand, radii, spacing, typography} from '../../theme/tokens';
 import type {ChatMessage} from '../../services/chatsApi';
 import {MarkdownText} from '../MarkdownText';
@@ -1210,6 +1211,11 @@ export const MessageBubble = memo(function MessageBubble({
   onLongPress,
 }: Props) {
   const {t} = useI18n();
+  const {currentOrganizationMember} = useAuth();
+  const showDeletedMessageContent =
+    currentOrganizationMember?.organization?.settings
+      ?.show_deleted_message_content === true;
+  const isDeleted = item.status === 'deleted';
   const out = isOutgoing(item, {chatType, currentUserId});
   const type = item.type || 'text';
   const metadata = getMetadata(item);
@@ -1302,7 +1308,7 @@ export const MessageBubble = memo(function MessageBubble({
     );
   };
 
-  if (type === 'deleted') {
+  if (type === 'deleted' || (isDeleted && !showDeletedMessageContent)) {
     return maybeHide(
       <SystemChip
         label={labels.deleted}
@@ -1637,8 +1643,14 @@ export const MessageBubble = memo(function MessageBubble({
     ? parseTemplateParts(item.content)
     : null;
   const responseTo = item.response_to as
-    | {content?: string | null; type?: string | null; sender_type?: string | null}
+    | {
+        content?: string | null;
+        type?: string | null;
+        sender_type?: string | null;
+        status?: string | null;
+      }
     | undefined;
+  const quotedIsDeleted = responseTo?.status === 'deleted';
 
   const showTextContent =
     !!item.content &&
@@ -1686,7 +1698,18 @@ export const MessageBubble = memo(function MessageBubble({
       pinned={pinned}
       onLongPress={handleLongPress}
       reactions={reactions}
-      style={hasEdgeMedia ? styles.bubbleImage : undefined}>
+      style={[
+        hasEdgeMedia ? styles.bubbleImage : undefined,
+        isDeleted && showDeletedMessageContent ? {opacity: 0.55} : undefined,
+      ]}>
+      {isDeleted && showDeletedMessageContent ? (
+        <View style={styles.deletedBadge}>
+          <Ban size={12} color={theme.tertiaryLabel} />
+          <Text style={[styles.deletedBadgeText, {color: theme.tertiaryLabel}]}>
+            {labels.deleted}
+          </Text>
+        </View>
+      ) : null}
       {/* Título do e-mail em largura total — ignora a coluna do horário. */}
       {emailSubject && !templateParts ? (
         <View style={[emailHeaderPad, styles.emailSubjectFull]}>
@@ -1694,6 +1717,7 @@ export const MessageBubble = memo(function MessageBubble({
             <View
               style={[
                 styles.quote,
+                quotedIsDeleted && {opacity: 0.6},
                 {
                   backgroundColor: out
                     ? 'rgba(255,255,255,0.14)'
@@ -1768,6 +1792,7 @@ export const MessageBubble = memo(function MessageBubble({
               style={[
                 styles.quote,
                 hasEdgeMedia && styles.imageInnerPad,
+                quotedIsDeleted && {opacity: 0.6},
                 {
                   backgroundColor: out
                     ? 'rgba(255,255,255,0.14)'
@@ -2049,6 +2074,17 @@ const styles = StyleSheet.create({
   bubbleWrapOut: {alignSelf: 'flex-end'},
   bubbleWrapIn: {alignSelf: 'flex-start'},
   hiddenBubble: {opacity: 0},
+  deletedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingTop: 6,
+  },
+  deletedBadgeText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
   reactionsWrap: {
     position: 'absolute',
     bottom: -10,
